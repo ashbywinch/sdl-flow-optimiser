@@ -1,0 +1,48 @@
+[project]
+name = "sdl-flow-optimiser"
+version = "0.1.0"
+description = "Analyze omp session logs as a queuing system; surface the single highest-impact process improvement"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "alembic>=1.13",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.11.0",
+    "pre-commit>=3.0.0",
+    "basedpyright>=1.39.0",
+    "archunitpython>=0.2.0",
+]
+
+[build-system]
+requires = ["setuptools>=64.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sdl_flow_optimiser*"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N"]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+omit = ["*/__main__.py"]
+
+[tool.basedpyright]
+include = ["sdl_flow_optimiser", "tests"]

@@ -1,0 +1,31 @@
+[openai]
+custom_llm_provider = "openai"
+api_base = "https://opencode.ai/zen/go/v1"
+
+[config]
+model = "openai/deepseek-v4-flash"
+custom_model_max_tokens = 128000
+max_model_tokens = 128000
+ai_timeout = 600
+fallback_models = []
+repo_context_from_default_branch = false
+repo_context_files = [
+    "docs/PRD.md",
+    "docs/TECHSPEC.md",
+    "docs/PLAN.md",
+    "docs/coding-standards.md",
+    "docs/testing-standards.md",
+    "docs/writing-documentation.md",
+    "docs/documentation-structure.md",
+    "docs/ux-standards.md",
+]
+
+[pr_reviewer]
+require_tests_review = true
+require_security_review = true
+num_max_findings = 50
+extra_instructions = "Check the PR against each file in repo_context_files. Add a 'Compliance' section per doc, listing any violations found or 'No violations'. Flag violations as findings, not just notes: style and semantic deviations from docs/coding-standards.md, test-standard deviations from docs/testing-standards.md, requirement deviations from docs/PRD.md (a change that violates a stated requirement, constraint, persona, or JTBD is a finding), documentation-standard deviations from docs/writing-documentation.md (missing or malformed required docs — PRD with JTBD/personas/constraints, TECHSPEC with choices/spikes/diagrams, PLAN with the software's phase inputs/outputs and quality gates — and the required docs failing the documentation-quality checklist), and UX deviations from docs/ux-standards.md (a change that violates a UX principle or the repo's usability baseline is a finding). Structural findings matter as much as bugs: a missed class (three or more free functions sharing the same record, or a pile of functions over one structure — docs/coding-standards.md 'Cohesive modules and classes') and class names that are technology or verb-derived nouns like GraphBuilder instead of domain nouns ('Names communicate intent') are findings, not style notes. Separation-of-concerns violations are findings too: importing a sibling layer directly, or a function that mixes I/O with computation — fetch/read/parse and decide in one body ('Separation of concerns')."
+
+[github_action_config]
+handle_push_trigger = true
+push_commands = ["/review", "/improve"]

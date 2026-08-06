@@ -1,0 +1,12 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks: [id: ruff, id: ruff-format]
+  - repo: https://github.com/DetachHead/basedpyright-prek-mirror
+    rev: 1.39.9
+    hooks:
+      - id: basedpyright
+        args: ["--level", "error"]
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks: [id: gitleaks]
