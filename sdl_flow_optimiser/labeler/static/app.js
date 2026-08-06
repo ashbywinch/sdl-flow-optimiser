@@ -1,7 +1,16 @@
 "use strict";
 
-const PHASES = { 1: "prd", 2: "tech_design", 3: "flow_design", 4: "breakdown", 5: "dev_plan", 6: "execute", 7: "pr_review", 8: "ux_loop" };
-const SHORT = { 1: "prd", 2: "tech", 3: "flow", 4: "brk", 5: "plan", 6: "exec", 7: "pr", 8: "ux" };
+// The user's own phase names — never abbreviations, never internal names.
+const PHASE_UI = {
+  1: "PRD",
+  2: "Tech design",
+  3: "Flow design",
+  4: "Tickets",
+  5: "Plan",
+  6: "Execute",
+  7: "PR + review",
+  8: "UX loop",
+};
 
 const state = {
   samples: [],
@@ -29,7 +38,7 @@ function el(tag, cls, text) {
 
 function phasePills(container, onPick) {
   const pick = el("div", "phasepick");
-  for (const [id, name] of Object.entries(PHASES)) {
+  for (const [id, name] of Object.entries(PHASE_UI)) {
     const b = el("button", "", name);
     b.onclick = () => {
       state.picked = Number(id);
@@ -62,7 +71,7 @@ async function adjudicate(callId, predPhase, agree, phase, comment, after) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ call_id: callId, agree, phase, comment }),
   });
-  const verdict = agree ? `Saved: agree — ${SHORT[predPhase]}` : `Saved: disagree — ${SHORT[predPhase]}${phase ? " → " + SHORT[phase] : " (no correction)"}`;
+  const verdict = agree ? `Saved: agree — ${PHASE_UI[predPhase]}` : `Saved: disagree — ${PHASE_UI[predPhase]}${phase ? " → " + PHASE_UI[phase] : " (no correction)"}`;
   toast(verdict, async () => {
     await api(`/api/labels/${callId}`, { method: "DELETE" });
     after && after();
@@ -108,7 +117,7 @@ function renderLabel() {
     const disagrees = state.batch.length - agrees;
     s.appendChild(el("div", "hint", `${state.batch.length} marked · ${agrees} agree · ${disagrees} disagree`));
     const ul = el("ul");
-    for (const b of state.batch) ul.appendChild(el("li", "", `${SHORT[b.phase] || b.pred} — ${b.session} — ${b.intent.slice(0, 50)}`));
+    for (const b of state.batch) ul.appendChild(el("li", "", `${b.phase ? PHASE_UI[b.phase] : PHASE_UI[b.pred]} — ${b.session} — ${b.intent.slice(0, 50)}`));
     s.appendChild(ul);
     const more = el("button", "ok", "Load more");
     more.style.marginTop = "10px";
@@ -126,18 +135,18 @@ function renderLabel() {
   tag.onclick = () => openSessionFromLabel(s);
   head.appendChild(tag);
   head.appendChild(el("span", "tag", `#${state.idx + 1}/${state.samples.length}`));
-  const phaseTxt = `${SHORT[s.pred_phase]} (${s.confidence})`;
+  const phaseTxt = `${PHASE_UI[s.pred_phase]} (${s.confidence})`;
   head.appendChild(el("span", "phase", `pred ${phaseTxt}`));
-  if (s.truth_phase) head.appendChild(el("span", "tag", `analyst: ${SHORT[s.truth_phase]}`));
+  if (s.truth_phase) head.appendChild(el("span", "tag", `analyst: ${PHASE_UI[s.truth_phase]}`));
   if (s.delegation) head.appendChild(el("span", "tag", "delegation"));
   card.appendChild(head);
   card.appendChild(el("div", "intent", s.intent || "(no intent)"));
   if (s.args) card.appendChild(el("div", "args", s.args));
   if (s.truth_phase && s.truth_phase !== s.pred_phase) {
-    card.appendChild(el("div", "conflict", `Model says ${SHORT[s.pred_phase]} (${s.confidence}) — I said ${SHORT[s.truth_phase]}. Which is right?`));
+    card.appendChild(el("div", "conflict", `Model says ${PHASE_UI[s.pred_phase]} (${s.confidence}) — I said ${PHASE_UI[s.truth_phase]}. Which is right?`));
   }
   if (s.label) {
-    card.appendChild(el("div", "bar", `already marked: ${s.label.agree ? "agree" : "disagree"}${s.label.phase ? " → " + SHORT[s.label.phase] : ""}`));
+    card.appendChild(el("div", "bar", `already marked: ${s.label.agree ? "agree" : "disagree"}${s.label.phase ? " → " + PHASE_UI[s.label.phase] : ""}`));
   }
 
   const ctx = el("div", "ctx");
@@ -150,7 +159,7 @@ function renderLabel() {
     const body = await api(`/api/samples/${s.call_id}/context?offset=${ctx._offset}`);
     ctx.textContent = "";
     for (const ev of body.events) {
-      ctx.appendChild(el("div", ev.this_sample ? "here" : "", `${SHORT[ev.phase]} ${ev.confidence.toFixed(2)} ${ev.tool} — ${(ev.intent || "").slice(0, 60)}`));
+      ctx.appendChild(el("div", ev.this_sample ? "here" : "", `${PHASE_UI[ev.phase]} ${ev.confidence.toFixed(2)} ${ev.tool} — ${(ev.intent || "").slice(0, 55)}`));
     }
     ctx._loaded = true;
     if (body.more_after) {
@@ -259,13 +268,13 @@ async function showSession(id) {
   for (const ev of detail.events) {
     const row = el("div", "event");
     const ehead = el("div", "e-head");
-    ehead.appendChild(el("span", "phase", `pred ${SHORT[ev.pred_phase]} (${ev.confidence})`));
-    if (ev.analyst_phase) ehead.appendChild(el("span", "tag", `analyst: ${SHORT[ev.analyst_phase]}`));
+    ehead.appendChild(el("span", "phase", `pred ${PHASE_UI[ev.pred_phase]} (${ev.confidence})`));
+    if (ev.analyst_phase) ehead.appendChild(el("span", "tag", `analyst: ${PHASE_UI[ev.analyst_phase]}`));
     if (ev.delegation) ehead.appendChild(el("span", "tag", "delegation"));
     row.appendChild(ehead);
     row.appendChild(el("div", "intent", ev.intent || "(no intent)"));
     if (ev.args) row.appendChild(el("div", "args", ev.args.slice(0, 160)));
-    if (ev.label) row.appendChild(el("div", "bar", `marked: ${ev.label.agree ? "agree" : "disagree"}${ev.label.phase ? " → " + SHORT[ev.label.phase] : ""}`));
+    if (ev.label) row.appendChild(el("div", "bar", `marked: ${ev.label.agree ? "agree" : "disagree"}${ev.label.phase ? " → " + PHASE_UI[ev.label.phase] : ""}`));
     const actions = el("div", "e-actions");
     const comment = el("input", "comment");
     comment.placeholder = "comment (optional)";
