@@ -123,12 +123,15 @@ class DocReference(Base):
 
 
 class PR(Base):
-    """Pull request — only populated if S2 proves attribution feasible."""
+    """Pull request — the review-queue item. Only populated if S2 proves
+    attribution feasible. Links to its work item so the review loop is part
+    of the work item's phase walk (the bottleneck metric needs this)."""
 
     __tablename__ = "prs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    work_item_id: Mapped[int | None] = mapped_column(ForeignKey("work_items.id"), nullable=True, index=True)
     number: Mapped[int] = mapped_column(Integer)
     title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     opened_at_ms: Mapped[int] = mapped_column(BigInteger)

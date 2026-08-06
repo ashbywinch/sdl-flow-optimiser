@@ -1,13 +1,14 @@
-"""S1 attribution spike — does rule-based phase classification agree with hand labels?
+"""Finding S1 — attribution feasibility: does phase attribution agree with hand labels?
 
-A repeatable experiment (TECHSPEC: investigate is a first-class stage).
-Extracts a stratified sample of tool executions from 5 sessions spanning the
-phase spectrum, classifies each with sdl_flow_optimiser.classifier, and
-compares against hand labels in s1_ground_truth.json (analyst labels — Ashby
-to validate).
+A repeatable experiment (the findings stage's core). Extracts a stratified
+sample of tool executions from 5 frozen sessions spanning the phase spectrum,
+attributes each with sdl_flow_optimiser.phase_attribution, and compares
+against hand labels in s1_ground_truth.json (analyst labels — Ashby to
+validate). Sessions in the sample MUST be frozen: a live transcript shifts
+the stratified sample between runs.
 
-    python -m sdl_flow_optimiser.investigate.s1_attribution --dump
-    python -m sdl_flow_optimiser.investigate.s1_attribution
+    python -m sdl_flow_optimiser.findings.attribution_feasibility --dump
+    python -m sdl_flow_optimiser.findings.attribution_feasibility [--errors]
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from sdl_flow_optimiser.classifier import PHASE_NAMES, classify_execution
+from sdl_flow_optimiser.phase_attribution import PHASE_NAMES, assign_phase
 
 STORE = Path.home() / ".omp" / "agent" / "sessions"
 HERE = Path(__file__).parent
@@ -31,8 +32,6 @@ SAMPLE: list[tuple[str, str, str]] = [
     ("home-houses", "2026-08-01T05-43", "Handle branch divergence from main"),
     ("home-feed-generator", "2026-08-01T11-36", "Fix lint errors and verify report"),
     ("home-family-history-album", "2026-08-02T19-34", "Begin data acquisition planning phase"),
-    # NOTE: sessions must be frozen (not currently being written) — a live
-    # transcript shifts the stratified sample between runs.
     ("home-feed-generator", "2026-08-04T04-43", "Fix PR creation and deploy pipeline"),
 ]
 
@@ -108,7 +107,7 @@ def dump() -> None:
     print(f"wrote {len(rows)} executions to {DUMP_PATH}")
 
 
-def evaluate() -> int:
+def evaluate(show_errors: bool) -> int:
     ground_truth = load_ground_truth()
     if not ground_truth:
         print("ground truth is empty — run --dump, label, re-run.")
@@ -116,19 +115,25 @@ def evaluate() -> int:
     correct = 0
     total = 0
     by_phase: dict[int, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
+    confusion: dict[tuple[int, int], int] = defaultdict(int)
+    errors: list[tuple[str, str, int, int, float]] = []
     for path, _label in find_files():
-        for ex in sample_execs(extract_executions(path)):
+        execs = sample_execs(extract_executions(path))
+        for pos, ex in enumerate(execs):
             truth = ground_truth.get(ex["call_id"])
             if truth is None:
                 continue
-            pred, _rule = classify_execution(ex["tool"], ex["intent"], ex["args"])
+            position_ratio = pos / max(len(execs) - 1, 1)
+            pred = assign_phase(ex["tool"], ex["intent"], ex["args"], position_ratio)
             total += 1
-            if pred == truth:
+            confusion[(truth, pred.phase_id)] += 1
+            if pred.phase_id == truth:
                 correct += 1
                 by_phase[truth]["tp"] += 1
             else:
                 by_phase[truth]["fn"] += 1
-                by_phase[pred]["fp"] += 1
+                by_phase[pred.phase_id]["fp"] += 1
+                errors.append((ex["tool"], ex["intent"], truth, pred.phase_id, pred.confidence))
     print(f"accuracy: {correct}/{total} = {correct / total:.2%}")
     print(f"{'phase':<12}{'prec':>7}{'recall':>8}{'n':>5}")
     for phase in sorted(by_phase):
@@ -136,8 +141,71 @@ def evaluate() -> int:
         prec = counts["tp"] / (counts["tp"] + counts["fp"]) if counts["tp"] + counts["fp"] else 0.0
         rec = counts["tp"] / (counts["tp"] + counts["fn"]) if counts["tp"] + counts["fn"] else 0.0
         print(f"{PHASE_NAMES[phase]:<12}{prec:>7.2%}{rec:>8.2%}{counts['tp'] + counts['fn']:>5}")
+    preds = sorted({p for _, p in confusion})
+    truths = sorted({t for t, _ in confusion})
+    print("confusion (truth → predicted):")
+    print(f"{'truth':<12}" + "".join(f"{PHASE_NAMES[p]:>11}" for p in preds))
+    for t in truths:
+        row = "".join(f"{confusion.get((t, p), 0):>11}" for p in preds)
+        print(f"{PHASE_NAMES[t]:<12}{row}")
+    if show_errors:
+        print("\nerrors (tool | intent | truth → pred | conf):")
+        for tool, intent, truth, pred, conf in sorted(errors, key=lambda e: e[4])[:60]:
+            print(f"  {tool:<10} {intent[:45]:<45} {PHASE_NAMES[truth]} → {PHASE_NAMES[pred]} {conf:.2f}")
+    return 0
+
+
+# Short phase codes for narrow screens — the confirmation list is read on a
+# phone; full names and tables are unreadable there.
+_SHORT = {1: "prd", 2: "tech", 3: "flow", 4: "brk", 5: "plan", 6: "exec", 7: "pr", 8: "ux"}
+
+
+def confirm() -> int:
+    """Write the phone-first confirmation list (analysis/findings/s1-confirm.md).
+
+    One sample per line, numbered so corrections can be replied as "12, 34
+    wrong"; disagreements first (lowest confidence first), then agreed
+    low-confidence predictions. Lines are width-constrained for a phone.
+    """
+    ground_truth = load_ground_truth()
+    rows: list[tuple[str, str, int, int, float]] = []  # tool, intent, truth, pred, conf
+    for path, _label in find_files():
+        execs = sample_execs(extract_executions(path))
+        for pos, ex in enumerate(execs):
+            truth = ground_truth.get(ex["call_id"])
+            if truth is None:
+                continue
+            position_ratio = pos / max(len(execs) - 1, 1)
+            pred = assign_phase(ex["tool"], ex["intent"], ex["args"], position_ratio)
+            rows.append((ex["tool"], ex["intent"], truth, pred.phase_id, pred.confidence))
+    disagreements = sorted([r for r in rows if r[2] != r[3]], key=lambda r: r[4])
+    low_conf_agreed = sorted([r for r in rows if r[2] == r[3] and r[4] < 0.5], key=lambda r: r[4])[:40]
+
+    def line(n: int, tool: str, intent: str, truth: int, pred: int, conf: float) -> str:
+        arrow = "=" if truth == pred else "≠"
+        intent_txt = (intent or "").replace("|", "/")[:24]
+        return f'{n:3d}. {_SHORT[truth]}{arrow}{_SHORT[pred]} {tool[:8]:<8} {conf:.2f} "{intent_txt}"'
+
+    out = [
+        "# S1 confirmation — reply with the numbers of any WRONG labels (e.g. '12 34').",
+        "# Lines: my label = classifier label, confidence, tool, intent.",
+        "",
+        f"## Disagreements ({len(disagreements)}) — adjudicate these",
+    ]
+    out += [line(i, *r) for i, r in enumerate(disagreements, 1)]
+    out += ["", f"## Agreed but low confidence ({len(low_conf_agreed)}) — spot check"]
+    out += [line(i, *r) for i, r in enumerate(low_conf_agreed, len(disagreements) + 1)]
+    path = Path(__file__).resolve().parents[2] / "analysis" / "findings" / "s1-confirm.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    print(f"wrote {len(disagreements)} disagreements + {len(low_conf_agreed)} low-confidence to {path}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(dump() if "--dump" in sys.argv else evaluate())
+    if "--dump" in sys.argv:
+        dump()
+    elif "--confirm" in sys.argv:
+        sys.exit(confirm())
+    else:
+        sys.exit(evaluate("--errors" in sys.argv))

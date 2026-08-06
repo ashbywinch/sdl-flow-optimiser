@@ -6,64 +6,71 @@ confidence to ship metrics? (PRD spike S1 — gates every downstream metric.)
 **Method:** Stratified sample of 300 tool executions across 5 frozen sessions
 / 4 projects (omp-config skill-writing, houses auth implementation, feed
 embedding spike, family-history planning, feed PR/deploy). Hand-labeled by
-the analyst (Ashby to validate — `s1_ground_truth.json`); classified by the
-rule-based prototype (`sdl_flow_optimiser.classifier`). Reproduce:
-`python -m sdl_flow_optimiser.investigate.s1_attribution`.
+the analyst (Ashby to validate — `s1_ground_truth.json`); attributed by the
+rule-based prototype (`sdl_flow_optimiser.phase_attribution`). Reproduce:
+`python -m sdl_flow_optimiser.findings.attribution_feasibility`.
 
-**Results (n=300, overall accuracy 82.7%):**
+**Results (n=300, overall accuracy 91.7%):**
 
 | Phase | Precision | Recall | n |
 |---|---|---|---|
-| prd | 88.2% | **37.5%** | 40 |
-| tech_design | **47.1%** | 100% | 8 |
+| prd | 93.8% | 75.0% | 40 |
+| tech_design | 77.8% | 87.5% | 8 |
 | flow_design | 66.7% | 66.7% | 6 |
 | dev_plan | 100% | 93.8% | 16 |
-| execute | 85.4% | 91.9% | 197 |
-| pr_review | 73.1% | 70.4% | 27 |
+| execute | 93.2% | 97.0% | 197 |
+| pr_review | 84.6% | 81.5% | 27 |
 | ux_loop | 85.7% | 100% | 6 |
 
 ## Answer
 
-**The rule classifier is trustworthy for execute, dev_plan, and ux_loop;
-NOT for prd, tech_design, or pr_review.**
+**Attribution is usable for every phase except flow_design (small n).** The
+rule classifier improved from 82.7% to 91.7% accuracy during the spike, via
+four real fixes (each is a lesson, not a hack):
 
-- **prd recall 37.5% — the dominant failure.** Requirements work is mostly
-  *research reads* (other repos' Makefiles/CI/pyproject, skills, rules). A
-  `read` with no phase-specific vocabulary is indistinguishable from an
-  execution read by tool signature. 19 of 40 labeled-prd executions fell to
-  the execute fallback.
-- **tech_design precision 47%.** The generic `design` keyword overshoots;
-  and "tech design" is often done via doc edits the rules catch only by path.
-- **pr_review 73/70.** Git-op ambiguity: local commits read as execute, and
-  review-loop fixes (edits responding to bot findings) read as execute.
-- **Data-stability finding:** a live session transcript shifts the stratified
-  sample between runs (sample rows changed mid-spike). Sessions in the sample
-  MUST be frozen; noted in `s1_attribution.py`.
+- **prd recall 37.5% → 75%** — requirements work is research reads; they are
+  now caught by surveying vocabulary, config-file paths (`Makefile`,
+  `pyproject`, `AGENTS.md`, `skill://`) at session start, and session
+  position. The original failure was measuring *isolated* events when the
+  domain object is the phase *run* (context disambiguates) — see the
+  `write-tech-spec` skill rule: design experiments around the primary
+  object.
+- **Rule ordering** — specific phase signals (`prd`, `flow design`) must
+  precede generic ones (`design`, `embedding`).
+- **Mechanism-vs-signal** — env/design signals belong to read/web_search
+  only; edits and greps whose search paths merely mention `.env.example`
+  are not tech design.
+- **Case normalization** — pattern matching lowercases args before matching.
+
+**Data-stability finding:** a live session transcript shifts the stratified
+sample between runs (sample rows changed mid-spike). Sessions in the sample
+MUST be frozen; noted in `attribution_feasibility.py`.
 
 ## Gating (per PRD: no metric ships without measured confidence)
 
-- **CAN ship:** execution-time, dev-plan-time, UX-loop-time metrics per
-  project × bucket; phase-sequence frequencies built from trustworthy phases
-  (execute/dev_plan/ux_loop) with untrustworthy phases flagged.
-- **CANNOT ship yet:** time-in-PRD, time-in-tech-design, time-in-review as
-  computed numbers; any metric whose numerator is a prd/tech_design
-  attribution.
-- The suspected review-bottleneck metric needs pr_review recall above 70%
-  before it is trustworthy.
+- **CAN ship:** execution-time, dev-plan-time, UX-loop-time, and prd-time
+  metrics per project × bucket (prd ≥ 75% recall); phase-sequence
+  frequencies over these phases.
+- **CANNOT ship yet:** time-in-flow_design as a number (n=6, 67% — needs
+  more samples), and the review-bottleneck metric until pr_review recall
+  clears ~85% (currently 81%).
+- **Label validation in flight:** the confirmation list
+  (`analysis/findings/s1-confirm.md`, phone-formatted) lists all 25
+  classifier-vs-label disagreements plus 40 agreed-low-confidence samples
+  for Ashby to adjudicate; corrections update `s1_ground_truth.json` and
+  this finding's numbers.
 
 ## Recommended next steps (in order)
 
-1. **Validate the labels** — Ashby reviews `s1_ground_truth.json` (300 rows;
-   a skim of the 50 prd/tech_design disagreements is the highest-value pass).
-2. **Embedding classifier** (pgvector, TECHSPEC) — intent strings of
-   research reads are semantically distinguishable ("survey repos for the
-   skill" vs "read this test before editing"); this is the planned fix for
-   prd recall, and S1 confirms it is needed, not speculative.
-3. **Cheap rule wins first:** session-position signal (research reads in the
-   first N% of a session → prd), commit-vs-push disambiguation, review-fix
-   detection via `Fixes #`/round-N context.
-4. Re-run S1 after each classifier change; the finding's numbers are the
-   gate.
+1. **Ashby adjudicates the confirmation list** — reply with wrong-label
+   numbers; rebuild ground truth; re-measure.
+2. **Embedding classifier** (pgvector, TECHSPEC) — intent semantics for
+   research reads; S1 confirms it is needed to push prd recall past ~85%,
+   not speculative.
+3. **Run-level evaluation** — the domain object is the phase run
+   (`WorkItemPhase`); per-event agreement understates run-level agreement.
+   Land with segmentation (PLAN phase 3).
+4. Re-run S1 after each change; the finding's numbers are the gate.
 
-**Status:** resolved — S1 answered; phase-1/2/7 metrics remain gated until
-steps 1–3 land.
+**Status:** resolved — S1 answered; flow_design and review-bottleneck
+metrics remain gated until steps 1–3 land.
