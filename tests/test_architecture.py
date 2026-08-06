@@ -21,7 +21,8 @@ def _format_violations(violations: list[Any]) -> str:
 
 
 def test_layer_boundaries():
-    """models standalone; core→models; stages→models+core; cli→everything below.
+    """models standalone; core→models; classifier standalone; stages→models+core;
+    investigate→classifier+core+models; cli→everything below.
 
     `*` crosses `/` in fnmatch, so `models/*.py` matches the whole tree
     under models/. The cli layer is the single root module file (plus
@@ -31,10 +32,14 @@ def test_layer_boundaries():
     la = la.layer("models").defined_by(f"{ROOT}/sdl_flow_optimiser/models/*.py")
     la = la.layer("core").defined_by(f"{ROOT}/sdl_flow_optimiser/core/*.py")
     la = la.layer("stages").defined_by(f"{ROOT}/sdl_flow_optimiser/stages/*.py")
+    la = la.layer("classifier").defined_by(f"{ROOT}/sdl_flow_optimiser/classifier.py")
+    la = la.layer("investigate").defined_by(f"{ROOT}/sdl_flow_optimiser/investigate/*.py")
     la = la.layer("cli").defined_by(f"{ROOT}/sdl_flow_optimiser/cli.py")
     la = la.where_layer("models").may_only_depend_on_layers()
     la = la.where_layer("core").may_only_depend_on_layers("models")
     la = la.where_layer("stages").may_only_depend_on_layers("models", "core")
+    la = la.where_layer("classifier").may_only_depend_on_layers()
+    la = la.where_layer("investigate").may_only_depend_on_layers("classifier", "core", "models")
     la = la.where_layer("cli").may_only_depend_on_layers("core", "models", "stages")
     violations = la.check()
     assert len(violations) == 0, _format_violations(violations)
