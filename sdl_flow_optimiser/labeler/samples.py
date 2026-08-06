@@ -30,6 +30,7 @@ LOW_CONFIDENCE_CUTOFF = 0.5
 class Sample(TypedDict):
     call_id: str
     session: str
+    session_id: str
     tool: str
     intent: str
     args: str
@@ -63,6 +64,7 @@ def build_samples() -> list[Sample]:
                 {
                     "call_id": ex["call_id"],
                     "session": ex["label"],
+                    "session_id": ex["session"],
                     "tool": ex["tool"],
                     "intent": ex["intent"],
                     "args": ex["args"],

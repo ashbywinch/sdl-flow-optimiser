@@ -114,3 +114,31 @@ def test_api_context_shows_surrounding_events(tmp_path):
     body = client.get(f"/api/samples/{sample['call_id']}/context").json()
     assert len(body["events"]) >= 3
     assert any(e["this_sample"] for e in body["events"])
+
+
+def test_samples_carry_session_id():
+    sample = select_samples("random", 1, seed=1)[0]
+    assert sample["session_id"].endswith(".jsonl")
+
+
+def test_api_label_delete_undoes(tmp_path):
+    client = _client(tmp_path)
+    sample = client.get("/api/samples?kind=random&n=1&seed=2").json()[0]
+    client.post("/api/labels", json={"call_id": sample["call_id"], "agree": False, "phase": 3})
+    assert sample["call_id"] in load_labels(tmp_path / "labels.json")
+    res = client.delete(f"/api/labels/{sample['call_id']}")
+    assert res.status_code == 200
+    assert sample["call_id"] not in load_labels(tmp_path / "labels.json")
+
+
+@pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
+def test_api_session_detail_shows_full_transcript(tmp_path):
+    client = _client(tmp_path)
+    sample = client.get("/api/samples?kind=random&n=1&seed=4").json()[0]
+    body = client.get(f"/api/sessions/{sample['session_id']}").json()
+    assert body["event_count"] >= 60  # full session, not a window
+    assert body["events"][0]["call_id"]
+    assert "pred_phase" in body["events"][0]
+    assert "analyst_phase" in body["events"][0]
+    assert any(e["call_id"] == sample["call_id"] for e in body["events"])
+    assert client.get("/api/sessions/not-a-real-session.jsonl").status_code == 404

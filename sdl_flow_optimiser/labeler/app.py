@@ -18,11 +18,14 @@ from sdl_flow_optimiser.findings.attribution_feasibility import (
     STORE,
     classify_with_context,
     extract_executions,
+    load_ground_truth,
 )
 from sdl_flow_optimiser.labeler.labels import (
     ASSOCIATIONS_PATH,
     LABELS_PATH,
+    _save,
     load_associations,
+    load_labels,
     save_association,
     save_label,
 )
@@ -110,6 +113,46 @@ def create_app(
     @app.get("/api/sessions")
     def sessions() -> list[dict[str, Any]]:
         return _list_sessions()
+
+    @app.get("/api/sessions/{session_id}")
+    def session_detail(session_id: str) -> dict[str, Any]:
+        """A whole session: every tool call in order, each with prediction,
+        confidence, the analyst's label, and any user adjudication. This is
+        the surf-and-judge surface — the session is the unit of work."""
+        path = next(
+            (d / session_id for d in STORE.iterdir() if d.is_dir() and (d / session_id).exists()),
+            None,
+        )
+        if path is None:
+            raise HTTPException(status_code=404, detail="session not on this machine")
+        execs = extract_executions(path)
+        preds = classify_with_context(execs)
+        ground_truth = load_ground_truth()
+        labels = load_labels(labels_path)
+        events = [
+            {
+                "call_id": e["call_id"],
+                "tool": e["tool"],
+                "intent": e["intent"],
+                "args": e["args"],
+                "pred_phase": pred.phase_id,
+                "confidence": round(pred.confidence, 2),
+                "delegation": delegation,
+                "analyst_phase": ground_truth.get(e["call_id"]),
+                "label": labels.get(e["call_id"]),
+            }
+            for e, (pred, delegation) in zip(execs, preds, strict=True)
+        ]
+        return {"id": session_id, "events": events, "event_count": len(events)}
+
+    @app.delete("/api/labels/{call_id}")
+    def delete_label(call_id: str) -> dict[str, bool]:
+        """Undo an adjudication."""
+        labels = load_labels(labels_path)
+        if call_id in labels:
+            del labels[call_id]
+            _save(labels_path, labels)
+        return {"ok": True}
 
     @app.get("/api/associations")
     def associations() -> list[dict[str, Any]]:
