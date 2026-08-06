@@ -24,7 +24,7 @@ help:
 	@echo "  ${GREEN}make db-down${NC}      Stop local Postgres (docker)"
 	@echo "  ${GREEN}make db-init${NC}      Apply migrations to the DB"
 	@echo "  ${GREEN}make db-revision${NC}  Autogenerate a migration (needs DB up)"
-	@echo "  ${GREEN}make web${NC}          Run the labeler web app on http://127.0.0.1:8010"
+	@echo "  ${GREEN}make web${NC}          Run the labeler web app on http://<laptop-ip>:8010 (LAN, no auth)"
 
 setup:
 	@uv --version >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -76,4 +76,4 @@ db-revision: setup
 	@uv run --env-file .env alembic revision --autogenerate -m "$(m)"
 
 web: setup
-	@uv run --env-file .env uvicorn sdl_flow_optimiser.labeler.app:app --host 127.0.0.1 --port 8010
+	@uv run --env-file .env uvicorn sdl_flow_optimiser.labeler.app:app --host 0.0.0.0 --port 8010
