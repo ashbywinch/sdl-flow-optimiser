@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import json
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
-from sdl_flow_optimiser.phase_attribution import PHASE_NAMES, assign_phase
+from sdl_flow_optimiser.phase_attribution import PHASE_NAMES, PhasePrediction, assign_phase, is_delegation
 
 STORE = Path.home() / ".omp" / "agent" / "sessions"
 HERE = Path(__file__).parent
@@ -27,9 +27,12 @@ DUMP_PATH = HERE / "s1_dump.jsonl"
 PER_SESSION = 60  # sampled executions per session
 
 # (project_dir_prefix, file_timestamp_prefix, label)
+# SAMPLE must be frozen sessions doing DEVELOPMENT work. Chores (git
+# maintenance, ops) are not SDLC phases and are excluded: the houses
+# branch-divergence session (bash-heavy, zero file edits) was such a chore —
+# a candidate chore signal is "no edit/write tool in the session".
 SAMPLE: list[tuple[str, str, str]] = [
     ("home-omp-config", "2026-08-01T07-31", "Create shell repo best practices skill"),
-    ("home-houses", "2026-08-01T05-43", "Handle branch divergence from main"),
     ("home-feed-generator", "2026-08-01T11-36", "Fix lint errors and verify report"),
     ("home-family-history-album", "2026-08-02T19-34", "Begin data acquisition planning phase"),
     ("home-feed-generator", "2026-08-04T04-43", "Fix PR creation and deploy pipeline"),
@@ -98,6 +101,111 @@ def load_ground_truth() -> dict[str, int]:
     return {k: int(v) for k, v in json.loads(GROUND_TRUTH_PATH.read_text(encoding="utf-8")).items()}
 
 
+# Short repo display names for narrow screens.
+_REPO_TAGS = {
+    "home-omp-config": "ompcfg",
+    "home-houses": "houses",
+    "home-feed-generator": "feed",
+    "home-family-history-album": "fam",
+}
+
+
+def session_openings() -> list[dict[str, str]]:
+    """Recognition anchor per sample session: repo, auto-title, the opening
+    user message, and the first-20 tool mix. Auto-titles are unreliable
+    (they reflect only the opening); the user's own first words identify the
+    work. The tool mix also flags delegated phases (scouts/jobs run in
+    subagents — the parent stream only shows the coordination calls)."""
+    openings: list[dict[str, str]] = []
+    for path, label in find_files():
+        first_user = ""
+        tools: list[str] = []
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if o.get("type") == "message":
+                    m = o.get("message", {})
+                    if m.get("role") == "user" and not first_user:
+                        texts = [
+                            c.get("text", "")
+                            for c in m.get("content", [])
+                            if isinstance(c, dict) and c.get("type") == "text"
+                        ]
+                        if texts:
+                            first_user = texts[0]
+                elif o.get("type") == "custom" and o.get("customType") == "tool_execution_start" and len(tools) < 20:
+                    tools.append(o.get("data", {}).get("toolName", ""))
+                if first_user and len(tools) >= 20:
+                    break
+        hist = " ".join(f"{t}×{c}" for t, c in Counter(tools).most_common(4))
+        proj = next(p for p in _REPO_TAGS if p in path.parent.name)
+        openings.append(
+            {
+                "repo": _REPO_TAGS[proj],
+                "label": label,
+                "user": first_user[:96],
+                "hist": hist or "(no tool calls)",
+            }
+        )
+    return openings
+
+
+def _nearest_phase(preds: list[tuple[PhasePrediction, bool]], i: int) -> int | None:
+    """Phase of the nearest non-delegation event — the parent context."""
+    for dist in range(1, len(preds)):
+        for j in (i - dist, i + dist):
+            if 0 <= j < len(preds) and not preds[j][1]:
+                return preds[j][0].phase_id
+    return None
+
+
+def classify_with_context(execs: list[dict[str, str]]) -> list[tuple[PhasePrediction, bool]]:
+    """Per-event attribution with delegation inheritance.
+
+    Delegation events (task spawns, hub subagent coordination) are not
+    phase-bearing: the work happens in the subagent's session, so the parent
+    event takes the phase of the nearest non-delegation activity.
+    """
+    n = len(execs)
+    preds: list[tuple[PhasePrediction, bool]] = []
+    for pos, ex in enumerate(execs):
+        delegation = is_delegation(ex["tool"], ex["intent"])
+        position_ratio = pos / max(n - 1, 1)
+        pred = assign_phase(ex["tool"], ex["intent"], ex["args"], position_ratio)
+        preds.append((pred, delegation))
+    for i, (_pred, delegation) in enumerate(preds):
+        if delegation:
+            inherited = _nearest_phase(preds, i)
+            if inherited is not None:
+                preds[i] = (PhasePrediction(inherited, 0.5, "delegation-context"), True)
+    return preds
+
+
+def apply_labels(labels_path: Path | None = None, ground_truth_path: Path | None = None) -> int:
+    """Fold user adjudication into the ground truth: a disagreement with a
+    corrected phase updates the label; agreements and comment-only
+    disagreements keep it. Idempotent — re-running changes nothing."""
+    labels_path = labels_path or (HERE / "s1_labels.json")
+    ground_truth_path = ground_truth_path or GROUND_TRUTH_PATH
+    if not labels_path.exists():
+        print("no labels to apply")
+        return 0
+    labels = json.loads(labels_path.read_text(encoding="utf-8"))
+    truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
+    applied = 0
+    for call_id, entry in labels.items():
+        phase = entry.get("phase")
+        if not entry.get("agree") and isinstance(phase, int) and phase in PHASE_NAMES and truth.get(call_id) != phase:
+            truth[call_id] = phase
+            applied += 1
+    ground_truth_path.write_text(json.dumps(truth) + "\n", encoding="utf-8")
+    print(f"applied {applied} corrections to ground truth")
+    return 0
+
+
 def dump() -> None:
     rows: list[dict[str, str]] = []
     for path, label in find_files():
@@ -114,17 +222,19 @@ def evaluate(show_errors: bool) -> int:
         return 1
     correct = 0
     total = 0
+    delegation_n = 0
     by_phase: dict[int, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
     confusion: dict[tuple[int, int], int] = defaultdict(int)
     errors: list[tuple[str, str, int, int, float]] = []
     for path, _label in find_files():
         execs = sample_execs(extract_executions(path))
-        for pos, ex in enumerate(execs):
+        for ex, (pred, delegation) in zip(execs, classify_with_context(execs), strict=True):
             truth = ground_truth.get(ex["call_id"])
             if truth is None:
                 continue
-            position_ratio = pos / max(len(execs) - 1, 1)
-            pred = assign_phase(ex["tool"], ex["intent"], ex["args"], position_ratio)
+            if delegation:
+                delegation_n += 1
+                continue  # not phase-bearing; reported separately
             total += 1
             confusion[(truth, pred.phase_id)] += 1
             if pred.phase_id == truth:
@@ -134,7 +244,7 @@ def evaluate(show_errors: bool) -> int:
                 by_phase[truth]["fn"] += 1
                 by_phase[pred.phase_id]["fp"] += 1
                 errors.append((ex["tool"], ex["intent"], truth, pred.phase_id, pred.confidence))
-    print(f"accuracy: {correct}/{total} = {correct / total:.2%}")
+    print(f"accuracy: {correct}/{total} = {correct / total:.2%} (delegation events excluded: {delegation_n})")
     print(f"{'phase':<12}{'prec':>7}{'recall':>8}{'n':>5}")
     for phase in sorted(by_phase):
         counts = by_phase[phase]
@@ -168,33 +278,43 @@ def confirm() -> int:
     low-confidence predictions. Lines are width-constrained for a phone.
     """
     ground_truth = load_ground_truth()
-    rows: list[tuple[str, str, int, int, float]] = []  # tool, intent, truth, pred, conf
-    for path, _label in find_files():
+    openings = session_openings()
+    tags = {o["label"]: f"S{i + 1}" for i, o in enumerate(openings)}
+    rows: list[tuple[str, str, int, int, float, bool, str]] = []  # + session tag
+    for path, label in find_files():
         execs = sample_execs(extract_executions(path))
-        for pos, ex in enumerate(execs):
+        for ex, (pred, delegation) in zip(execs, classify_with_context(execs), strict=True):
             truth = ground_truth.get(ex["call_id"])
             if truth is None:
                 continue
-            position_ratio = pos / max(len(execs) - 1, 1)
-            pred = assign_phase(ex["tool"], ex["intent"], ex["args"], position_ratio)
-            rows.append((ex["tool"], ex["intent"], truth, pred.phase_id, pred.confidence))
-    disagreements = sorted([r for r in rows if r[2] != r[3]], key=lambda r: r[4])
-    low_conf_agreed = sorted([r for r in rows if r[2] == r[3] and r[4] < 0.5], key=lambda r: r[4])[:40]
+            rows.append((ex["tool"], ex["intent"], truth, pred.phase_id, pred.confidence, delegation, tags[label]))
+    disagreements = sorted([r for r in rows if not r[5] and r[2] != r[3]], key=lambda r: r[4])
+    low_conf_agreed = sorted([r for r in rows if not r[5] and r[2] == r[3] and r[4] < 0.5], key=lambda r: r[4])[:40]
+    delegations = sorted([r for r in rows if r[5]], key=lambda r: r[4])
 
-    def line(n: int, tool: str, intent: str, truth: int, pred: int, conf: float) -> str:
+    def line(n: int, row: tuple[str, str, int, int, float, bool, str]) -> str:
+        tool, intent, truth, pred, conf, _del, tag = row
         arrow = "=" if truth == pred else "≠"
-        intent_txt = (intent or "").replace("|", "/")[:24]
-        return f'{n:3d}. {_SHORT[truth]}{arrow}{_SHORT[pred]} {tool[:8]:<8} {conf:.2f} "{intent_txt}"'
+        intent_txt = (intent or "").replace("|", "/")[:18]
+        return f'{n:3d}. [{tag}] {_SHORT[truth]}{arrow}{_SHORT[pred]} {tool[:7]:<7} {conf:.2f} "{intent_txt}"'
 
     out = [
         "# S1 confirmation — reply with the numbers of any WRONG labels (e.g. '12 34').",
-        "# Lines: my label = classifier label, confidence, tool, intent.",
+        "# Lines: [session] my label = classifier label, confidence, tool, intent.",
+        "# Delegation events (subtask coordination) inherit the parent phase.",
         "",
-        f"## Disagreements ({len(disagreements)}) — adjudicate these",
+        "## Sessions (S1..S5) — repo · title · opening · first-20 tools",
     ]
-    out += [line(i, *r) for i, r in enumerate(disagreements, 1)]
+    for o in openings:
+        out.append(f"  {tags[o['label']]:<3} {o['repo']:<7} {o['label'][:38]}")
+        out.append(f"      open: {o['user'][:43]}")
+        out.append(f"      tools: {o['hist']}")
+    out += ["", f"## Disagreements ({len(disagreements)}) — adjudicate these"]
+    out += [line(i, r) for i, r in enumerate(disagreements, 1)]
     out += ["", f"## Agreed but low confidence ({len(low_conf_agreed)}) — spot check"]
-    out += [line(i, *r) for i, r in enumerate(low_conf_agreed, len(disagreements) + 1)]
+    out += [line(i, r) for i, r in enumerate(low_conf_agreed, len(disagreements) + 1)]
+    out += ["", f"## Delegation ({len(delegations)}) — subtask coordination, context-inherited"]
+    out += [line(i, r) for i, r in enumerate(delegations, len(disagreements) + len(low_conf_agreed) + 1)]
     path = Path(__file__).resolve().parents[2] / "analysis" / "findings" / "s1-confirm.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
@@ -207,5 +327,7 @@ if __name__ == "__main__":
         dump()
     elif "--confirm" in sys.argv:
         sys.exit(confirm())
+    elif "--apply-labels" in sys.argv:
+        sys.exit(apply_labels())
     else:
         sys.exit(evaluate("--errors" in sys.argv))

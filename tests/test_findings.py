@@ -10,11 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from sdl_flow_optimiser.findings.attribution_feasibility import PER_SESSION, confirm, find_files, sample_execs
+from sdl_flow_optimiser.findings.attribution_feasibility import (
+    PER_SESSION,
+    classify_with_context,
+    confirm,
+    find_files,
+    sample_execs,
+)
 
 HERE = Path(__file__).resolve().parent.parent / "sdl_flow_optimiser" / "findings"
 
-STORE_PRESENT = len(find_files()) == 5  # the omp session store lives on this machine
+STORE_PRESENT = len(find_files()) == 4  # the omp session store lives on this machine
 
 
 def _load():
@@ -23,11 +29,11 @@ def _load():
     return dump, truth
 
 
-def test_dump_has_five_sessions_of_per_session_samples():
+def test_dump_has_four_sessions_of_per_session_samples():
     dump, _ = _load()
     sessions = {row["session"] for row in dump}
-    assert len(sessions) == 5
-    assert len(dump) == 5 * PER_SESSION
+    assert len(sessions) == 4
+    assert len(dump) == 4 * PER_SESSION
 
 
 def test_ground_truth_keys_match_dump_call_ids_exactly():
@@ -84,3 +90,69 @@ def test_confirm_generates_on_demand():
     after = path.read_text(encoding="utf-8")
     assert after == before or "# S1 confirmation" in after
     assert "## Disagreements" in after
+
+
+@pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
+def test_session_openings_are_recognizable():
+    """Every sample session gets a repo, an opening user message, and a tool
+    mix — the recognition anchor for adjudicating samples on a phone."""
+    from sdl_flow_optimiser.findings.attribution_feasibility import session_openings
+
+    openings = session_openings()
+    assert len(openings) == 4
+    for o in openings:
+        assert o["repo"]
+        assert o["user"], f"{o['label']} has no opening user message"
+        assert o["hist"], f"{o['label']} has no tool mix"
+
+
+def test_apply_labels_folds_disagreements_into_ground_truth(tmp_path):
+    from sdl_flow_optimiser.findings.attribution_feasibility import apply_labels
+
+    gt_path = tmp_path / "gt.json"
+    labels_path = tmp_path / "labels.json"
+    gt_path.write_text(json.dumps({"a": 6, "b": 6}) + "\n", encoding="utf-8")
+    labels_path.write_text(
+        json.dumps(
+            {
+                "a": {"agree": True, "phase": None, "comment": ""},  # agreement: no change
+                "b": {"agree": False, "phase": 1, "comment": "research"},  # correction
+                "c": {"agree": False, "phase": None, "comment": "unresolved"},  # no phase: no change
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    apply_labels(labels_path, gt_path)
+    truth = json.loads(gt_path.read_text(encoding="utf-8"))
+    assert truth["a"] == 6
+    assert truth["b"] == 1
+    assert "c" not in truth  # comment-only disagreement adds nothing
+    # idempotent
+    apply_labels(labels_path, gt_path)
+    assert json.loads(gt_path.read_text(encoding="utf-8"))["b"] == 1
+
+
+def test_delegation_inherits_parent_phase():
+    """A task spawn between execute events takes execute; a scout check in a
+    prd research run takes prd — the event's own signature is irrelevant."""
+    execs = [
+        {"tool": "read", "intent": "read example skill format", "args": "{}", "call_id": "a"},
+        {"tool": "task", "intent": "", "args": "{}", "call_id": "b"},  # delegation
+        {"tool": "edit", "intent": "Fix the import", "args": "{}", "call_id": "c"},
+    ]
+    preds = classify_with_context(execs)
+    assert preds[1][1] is True  # marked delegation
+    assert preds[1][0].rule == "delegation-context"
+    # the surrounding research run ("read example skill format" at session
+    # start) is prd — the task inherits it, not execute
+    assert preds[1][0].phase_id == 1
+
+    execs2 = [
+        {"tool": "read", "intent": "read example skill format", "args": "{}", "call_id": "a"},
+        {"tool": "hub", "intent": "check scout jobs status", "args": "{}", "call_id": "b"},
+        {"tool": "read", "intent": "read houses Makefile", "args": "{}", "call_id": "c"},
+    ]
+    preds2 = classify_with_context(execs2)
+    assert preds2[1][1] is True
+    assert preds2[1][0].phase_id == 1  # research run at session start is prd

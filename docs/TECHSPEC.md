@@ -25,6 +25,9 @@ flowchart LR
     P --> EM[emit]
     EM --> A1[analysis/latest/metrics.json]
     EM --> A2[analysis/latest/report.md]
+    IV -->|samples · context| LB[labeler]
+    LB -->|labels · associations| LBJSON[s1_labels.json · s1_associations.json]
+    F -. transcript context .-> LB
 ```
 
 ### Physical architecture
@@ -40,6 +43,13 @@ flowchart LR
 - Artifacts (`analysis/latest/*`) are serialized views of the latest
   `AnalysisRun` — the DB is the source of truth; artifacts are for the omp
   chat loop (PRD scope item 6).
+- **Labeler** — a local FastAPI web app (`make web`, port 8010, no auth):
+  serves adjudicable samples (random / low-confidence / disagreements) with
+  the surrounding transcript context from the store, records the user's
+  agree/disagree + corrected phase + comment to `s1_labels.json`, and
+  associates same-work sessions via `s1_associations.json`. JSON files are
+  committed evidence (like the ground truth), not DB rows — adjudication
+  precedes the DB stages. Static frontend, no build step, phone-usable.
 
 ### Data flow
 

@@ -29,6 +29,10 @@ PHASE_NAMES: dict[int, str] = {
 _EXECUTE_TOOLS: frozenset[str] = frozenset({"edit", "write", "ast_edit", "lsp", "eval", "debug"})
 _RESEARCH_TOOLS: frozenset[str] = frozenset({"read", "grep", "glob", "web_search"})
 
+# Subagent-coordination hub intents. Process management (start/logs/stop a
+# dev server) is execution; checking on scouts/jobs/subtasks is delegation.
+_DELEGATION_HUB = re.compile(r"\b(scout|job|subtask|one-shot|wait for)\b")
+
 # Research reads in service of requirements work use surveying vocabulary or
 # read config files of other repos; execution reads name a specific file or
 # symbol. (S1: "read chat-workflow Makefile" at session start = prd; "Read
@@ -45,7 +49,7 @@ _RULES: list[tuple[int, re.Pattern[str], float]] = [
     (
         7,
         re.compile(
-            r"pr://|pr-workflow|pr-agent|review bot|gh pr|gh run|\bpr \d|pr body|pr state|"
+            r"pr://|pr-workflow|review bot|gh pr|gh run|\bpr \d|pr body|pr state|"
             + r"pull request|review fix|review finding|fix.*review|review comment|"
             + r"review completion|round-\d+|bot run|merge|\bpush\b"
         ),
@@ -71,6 +75,19 @@ class PhasePrediction:
     phase_id: int
     confidence: float
     rule: str
+
+
+def is_delegation(tool: str, intent: str) -> bool:
+    """True for subtask orchestration: a `task` spawn or hub coordination.
+
+    Delegation events are not phase-bearing themselves — the work happens in
+    the subagent's session, and the parent's phase is inherited from context
+    (see the findings experiment). Process management (hub start/logs/stop
+    for dev servers) is execution, not delegation.
+    """
+    if tool == "task":
+        return True
+    return tool == "hub" and _DELEGATION_HUB.search(intent.lower()) is not None
 
 
 def assign_phase(tool: str, intent: str, args: str, position_ratio: float | None = None) -> PhasePrediction:

@@ -2,7 +2,7 @@
 
 import pytest
 
-from sdl_flow_optimiser.phase_attribution import PHASE_NAMES, PhasePrediction, assign_phase
+from sdl_flow_optimiser.phase_attribution import PHASE_NAMES, PhasePrediction, assign_phase, is_delegation
 
 
 def test_returns_prediction_object():
@@ -170,6 +170,24 @@ def test_survey_bash_mid_session_is_execute():
 def test_prd_rule_precedes_embedding_keyword():
     # "PRD to gemini-embedding-001" is a PRD edit, not tech design
     assert assign_phase("edit", "Update PRD to gemini-embedding-001", "{}").phase_id == 1
+
+
+def test_task_spawn_is_delegation():
+    assert is_delegation("task", "")
+    assert is_delegation("task", "Refactor the auth module")
+
+
+def test_hub_scout_coordination_is_delegation():
+    assert is_delegation("hub", "check scout jobs status")
+    assert is_delegation("hub", "wait for remaining scouts")
+    assert is_delegation("hub", "wait for one-shot scaffold test")
+
+
+def test_hub_process_management_is_not_delegation():
+    assert not is_delegation("hub", "Start frontend on 5173")
+    assert not is_delegation("hub", "Stop stuck spike")
+    assert not is_delegation("hub", "Follow spike log for stage 4")
+    assert not is_delegation("hub", "Run device-flow login via hub")
 
 
 def test_phase_names_cover_all_phases():

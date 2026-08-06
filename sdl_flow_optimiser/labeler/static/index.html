@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S1 labeler</title>
+<style>
+  :root { --bg:#111; --card:#1c1c1e; --fg:#eee; --dim:#999; --acc:#4da3ff; --ok:#3fb950; --bad:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui,sans-serif; }
+  header { padding:12px 14px; display:flex; gap:12px; align-items:baseline; border-bottom:1px solid #333; }
+  header h1 { font-size:18px; margin:0; }
+  nav button { background:none; border:none; color:var(--dim); font-size:15px; padding:6px 10px; }
+  nav button.active { color:var(--fg); border-bottom:2px solid var(--acc); }
+  main { max-width:640px; margin:0 auto; padding:12px; }
+  .bar { color:var(--dim); font-size:13px; margin-bottom:10px; }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .controls select,.controls input,.controls button { font-size:15px; padding:8px; border-radius:8px; border:1px solid #444; background:#222; color:var(--fg); }
+  .card { background:var(--card); border:1px solid #333; border-radius:12px; padding:12px; margin-bottom:12px; }
+  .card .head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .tag { background:#2a2a2e; padding:2px 8px; border-radius:6px; font-size:12px; color:var(--dim); }
+  .phase { font-weight:600; }
+  .conf { font-size:12px; color:var(--dim); }
+  .intent { margin:8px 0 4px; font-weight:500; }
+  .args { font-family:ui-monospace,monospace; font-size:12px; color:var(--dim); white-space:pre-wrap; word-break:break-all; }
+  .ctx { margin-top:8px; border-top:1px solid #333; padding-top:8px; font-size:13px; }
+  .ctx div { padding:2px 0; color:var(--dim); }
+  .ctx .here { color:var(--fg); font-weight:600; }
+  .ctx .more { background:none; border:none; color:var(--acc); font-size:13px; padding:4px 0; }
+  .actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .actions button { flex:1; min-width:120px; padding:12px; font-size:16px; border-radius:10px; border:none; }
+  .ok { background:var(--ok); color:#000; font-weight:600; }
+  .bad { background:var(--bad); color:#fff; font-weight:600; }
+  .comment { width:100%; margin-top:8px; padding:8px; border-radius:8px; border:1px solid #444; background:#222; color:var(--fg); font-size:15px; }
+  .phasepick { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .phasepick button { padding:6px 10px; border-radius:8px; border:1px solid #444; background:#222; color:var(--fg); }
+  .phasepick button.sel { background:var(--acc); color:#000; border-color:var(--acc); }
+  .done { color:var(--dim); text-align:center; padding:30px 0; }
+  .session { padding:10px 0; border-bottom:1px solid #2a2a2e; }
+  .session .s-title { font-weight:600; }
+  .session .s-meta { font-size:12px; color:var(--dim); }
+  .assoc { margin-top:14px; }
+  .assoc ul { list-style:none; padding:0; }
+  .assoc li { padding:6px 0; color:var(--dim); font-size:14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>S1 labeler</h1>
+  <nav>
+    <button id="tab-label" class="active">Label</button>
+    <button id="tab-sessions">Sessions</button>
+  </nav>
+</header>
+<main>
+  <section id="pane-label">
+    <div class="bar" id="sets"></div>
+    <div class="controls">
+      <select id="kind">
+        <option value="random">Random sample</option>
+        <option value="lowconf">Low confidence</option>
+        <option value="disagreements">Disagreements</option>
+      </select>
+      <input id="count" type="number" value="20" min="1" max="100" style="width:70px">
+      <button id="load">Load</button>
+    </div>
+    <div id="queue"></div>
+  </section>
+  <section id="pane-sessions" hidden>
+    <div class="bar">Pick two sessions that are the same piece of work, then Associate.</div>
+    <div id="sessions"></div>
+    <div class="assoc">
+      <button id="associate" disabled style="padding:10px 16px;border-radius:8px;border:none;background:var(--acc);color:#000;font-weight:600">Associate selected</button>
+      <div id="assoc-list"></div>
+    </div>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

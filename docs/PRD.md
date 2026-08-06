@@ -79,7 +79,15 @@ process improvement, with evidence, and let the user interrogate it in chat.
      waiting-on-review time; context switches between projects.
 5. **Recommend** the single highest-impact actionable change + supporting
    evidence; keep ranked alternatives visible. Advisory only.
-6. **Emit artifact** the omp agent can load and argue about: structured JSON +
+6. **Adjudicate attribution in a web tool** — a local labeler app
+   (`make web`): the user marks the analyst's homework by agreeing or
+   disagreeing (with corrected phase + comment) on random and
+   low-confidence samples, with the surrounding transcript context in view.
+   Adjudication updates the ground truth; no metric ships until its source
+   attribution is user-validated. The same tool associates sessions that
+   are one piece of work across multiple sessions (plan session → execute
+   session).
+7. **Emit artifact** the omp agent can load and argue about: structured JSON +
    human-readable markdown at a stable path in this repo. The conversation
    happens in omp (point the agent at the artifact); no chat UI in V1.
    Nothing ships below the confidence threshold.

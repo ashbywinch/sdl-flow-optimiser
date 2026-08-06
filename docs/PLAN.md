@@ -33,13 +33,19 @@ and produces — never project-management artifacts.
 - Inputs: normalized tables, hand-labeled sample of 3–5 sessions.
 - Outputs: `phase_definitions` (8 phases + rule signatures),
   `phase_assignments` with confidence, `classifier_evals` (precision/recall
-  per phase), `findings` answering S1 (which metrics are trustworthy).
+  per phase), `findings` answering S1 (which metrics are trustworthy), the
+  user's adjudication (`s1_labels.json`).
 - Operations: `make classify` (rule-based; embedding classifier pluggable
-  later via pgvector) and `make investigate` (label sample, measure
-  agreement, write findings).
+  later via pgvector), `make investigate` (label sample, measure agreement,
+  write findings), and `make web` — the labeler app where the user marks
+  random and low-confidence samples agree/disagree (with corrected phase +
+  comment) against the surrounding transcript context; `--apply-labels`
+  folds the adjudication into the ground truth.
 - Quality gate: every metric's source attribution is validated by a
-  resolved `finding`; no metric computes from an unvalidated attribution.
-  Classifier agreement is measured, not assumed.
+  resolved `finding` backed by user adjudication — no metric computes from
+  an unvalidated attribution. Classifier agreement is measured, not
+  assumed. Chore sessions (git/ops maintenance, no file modifications) are
+  excluded from phase analysis.
 
 ## Phase 3 — Segmentation + S2/S3 investigations
 

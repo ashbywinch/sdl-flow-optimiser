@@ -1,6 +1,6 @@
 # Makefile for sdl-flow-optimiser
 .PHONY: help setup run lint lint-github typecheck test coverage format clean \
-	db-up db-down db-init db-revision
+	db-up db-down db-init db-revision web
 
 PYTHON := .venv/bin/python
 RUFF := .venv/bin/ruff
@@ -24,6 +24,7 @@ help:
 	@echo "  ${GREEN}make db-down${NC}      Stop local Postgres (docker)"
 	@echo "  ${GREEN}make db-init${NC}      Apply migrations to the DB"
 	@echo "  ${GREEN}make db-revision${NC}  Autogenerate a migration (needs DB up)"
+	@echo "  ${GREEN}make web${NC}          Run the labeler web app on http://127.0.0.1:8010"
 
 setup:
 	@uv --version >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -73,3 +74,6 @@ db-init: setup
 
 db-revision: setup
 	@uv run --env-file .env alembic revision --autogenerate -m "$(m)"
+
+web: setup
+	@uv run --env-file .env uvicorn sdl_flow_optimiser.labeler.app:app --host 127.0.0.1 --port 8010
