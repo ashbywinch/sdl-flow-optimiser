@@ -14,6 +14,6 @@ jobs:
       - uses: the-pr-agent/pr-agent@v0.41.1   # pin a real release tag — @latest does not resolve
         id: pr-agent
         env:
-          OPENAI_KEY: ${{ secrets.SDL_FLOW_OPTIMISER_API_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENCODE_GO_SDL_FLOW_OPTIMISER_API_KEY }}
           OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
