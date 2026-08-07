@@ -26,6 +26,7 @@ const state = {
   sessionIdx: -1,
   selected: [],
   associations: [],
+  mode: "conversation", // conversation | all — the transcript is the conversation by default
 };
 
 async function api(path, opts) {
@@ -342,7 +343,9 @@ function updateSessionBar() {
     return;
   }
   bar.style.display = "flex";
-  const left = state.session.transcript.length - state.rendered;
+  const visible = visibleItems(state.session.transcript);
+  const shown = visible.filter((it) => state.session.transcript.indexOf(it) < state.rendered).length;
+  const left = visible.length - shown;
   document.getElementById("sess-more").textContent = left > 0 ? `Show more (${left} left)` : "All shown";
   document.getElementById("sess-more").disabled = left <= 0;
   document.getElementById("sess-end").textContent = "Jump to end";
@@ -371,6 +374,14 @@ function showSession(id) {
     wrap.appendChild(head);
     wrap.appendChild(el("div", "s-title", meta.title || "(untitled)"));
     wrap.appendChild(el("div", "s-meta", `${meta.repo || ""} · ${detail.tool_calls} tool calls · ${detail.transcript.length} events`));
+    const mode = el("div", "chips");
+    const conv = el("button", state.mode === "conversation" ? "sel" : "", "Conversation");
+    const all = el("button", state.mode === "all" ? "sel" : "", "All");
+    conv.onclick = () => { state.mode = "conversation"; showSession(id); };
+    all.onclick = () => { state.mode = "all"; showSession(id); };
+    mode.appendChild(conv);
+    mode.appendChild(all);
+    wrap.appendChild(mode);
     const counts = {};
     for (const it of detail.transcript) {
       if (it.kind === "tool_call") counts[it.pred_phase] = (counts[it.pred_phase] || 0) + 1;
@@ -394,6 +405,10 @@ function showSession(id) {
   });
 }
 
+function visibleItems(t) {
+  return t.filter((it) => state.mode === "all" || (it.kind !== "tool_call" && it.kind !== "tool_result"));
+}
+
 function renderTranscript(wrap) {
   const detail = state.session;
   // remove previously rendered items except header/chips
@@ -406,7 +421,7 @@ function renderTranscript(wrap) {
       wrap.appendChild(textBubble("you", it.text));
     } else if (it.kind === "assistant") {
       wrap.appendChild(textBubble("agent", it.text));
-    } else if (it.kind === "tool_call") {
+    } else if (it.kind === "tool_call" && state.mode === "all") {
       const row = el("div", "event compact");
       row.id = `tc-${i}`;
       const line = el("div", "tline");
