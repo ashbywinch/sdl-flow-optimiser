@@ -75,7 +75,8 @@
   .chunkbar { display:flex; gap:8px; margin:10px 0; }
   .chunkbar button { flex:1; padding:12px; border-radius:10px; border:1px solid #444; background:#222; color:var(--fg); font-size:15px; }
   .collapsed { cursor:pointer; }
-  #modal { position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:20; display:flex; align-items:center; justify-content:center; }
+  #modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:20; align-items:center; justify-content:center; }
+  #modal.open { display:flex; }
   #modal-box { background:#1c1c1e; border:1px solid #444; border-radius:14px; width:94%; max-width:640px; max-height:88vh; display:flex; flex-direction:column; }
   #modal-head { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid #333; }
   #modal-close { background:none; border:none; color:var(--fg); font-size:18px; padding:6px 10px; }

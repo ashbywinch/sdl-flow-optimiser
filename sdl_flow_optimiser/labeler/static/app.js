@@ -90,11 +90,11 @@ function openOverlay(title, text) {
   const modal = document.getElementById("modal");
   document.getElementById("modal-title").textContent = title;
   document.getElementById("modal-body").textContent = text;
-  modal.hidden = false;
+  modal.classList.add("open");
 }
 
 function closeOverlay() {
-  document.getElementById("modal").hidden = true;
+  document.getElementById("modal").classList.remove("open");
 }
 
 function textBubble(kind, text) {
