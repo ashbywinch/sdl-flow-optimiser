@@ -120,6 +120,7 @@ def session_openings() -> list[dict[str, str]]:
     for path, label in find_files():
         first_user = ""
         tools: list[str] = []
+        first_user_seen = False
         with open(path, errors="replace") as fh:
             for line in fh:
                 try:
@@ -135,6 +136,10 @@ def session_openings() -> list[dict[str, str]]:
                             if isinstance(c, dict) and c.get("type") == "text"
                         ]
                         if texts:
+                            if not first_user_seen:
+                                first_user_seen = True
+                                if len(texts[0]) > 1500:
+                                    continue  # harness-injected preamble
                             first_user = texts[0]
                 elif o.get("type") == "custom" and o.get("customType") == "tool_execution_start" and len(tools) < 20:
                     tools.append(o.get("data", {}).get("toolName", ""))

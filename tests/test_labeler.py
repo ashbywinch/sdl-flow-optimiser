@@ -4,6 +4,8 @@ Sample selection reads committed evidence files (no session store needed);
 the context endpoint needs the store and is store-guarded.
 """
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -13,6 +15,63 @@ from sdl_flow_optimiser.labeler.labels import load_associations, load_labels, sa
 from sdl_flow_optimiser.labeler.samples import build_samples, sample_counts, select_samples
 
 STORE_PRESENT = len(find_files()) == 4
+
+
+def test_transcript_skips_harness_preamble(tmp_path):
+    """The opening user message, when it is a huge machine-generated prompt,
+    is dropped; the user's real short opening is the first user item."""
+    from sdl_flow_optimiser.labeler.transcript import extract_transcript
+
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "x" * 5000}]}}
+                ),
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {"role": "user", "content": [{"type": "text", "text": "ok let's make a plan"}]},
+                    }
+                ),
+                json.dumps(
+                    {"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "sure"}]}}
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    items = extract_transcript(f)
+    users = [it for it in items if it["kind"] == "user"]
+    assert [u["text"] for u in users] == ["ok let's make a plan"]
+
+
+def test_transcript_keeps_long_user_pastes_after_opening(tmp_path):
+    """A long user message AFTER the opening is real content (a paste), kept."""
+    from sdl_flow_optimiser.labeler.transcript import extract_transcript
+
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {"role": "user", "content": [{"type": "text", "text": "short opening"}]},
+                    }
+                ),
+                json.dumps(
+                    {"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "y" * 3000}]}}
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    items = extract_transcript(f)
+    assert sum(1 for it in items if it["kind"] == "user") == 2
 
 
 def test_label_round_trip(tmp_path):

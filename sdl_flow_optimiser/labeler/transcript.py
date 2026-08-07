@@ -16,15 +16,23 @@ from typing import Any
 from sdl_flow_optimiser.findings.attribution_feasibility import classify_with_context
 from sdl_flow_optimiser.phase_attribution import PhasePrediction
 
+# Harness-injected preamble: the opening "user" message in some sessions is
+# a machine-generated prompt (code-review requests, file dumps) — huge and
+# structured, not the user's voice. The user's real opening is short.
+# Skip the FIRST user message when it exceeds this length.
+PREAMBLE_MAX = 1500
+
 
 def extract_transcript(path: Path) -> list[dict[str, Any]]:
     """One item per renderable event, in file order.
 
     Item kinds: user (your words), assistant (the agent's text), tool_call
-    (classified), tool_result (marker only).
+    (classified), tool_result (marker only). The harness-injected opening
+    prompt is dropped, not rendered.
     """
     items: list[dict[str, Any]] = []
     start_by_call: dict[str, dict[str, str]] = {}  # call_id -> intent/args from tool_execution_start
+    first_user_seen = False
     with open(path, errors="replace") as fh:
         for line in fh:
             try:
@@ -41,6 +49,10 @@ def extract_transcript(path: Path) -> list[dict[str, Any]]:
                         if isinstance(c, dict) and c.get("type") == "text"
                     )
                     if text:
+                        if not first_user_seen:
+                            first_user_seen = True
+                            if len(text) > PREAMBLE_MAX:
+                                continue  # harness preamble, not the user's voice
                         items.append({"kind": "user", "text": text})
                 elif role == "assistant":
                     for block in m.get("content", []):

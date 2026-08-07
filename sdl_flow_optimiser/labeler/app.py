@@ -189,6 +189,7 @@ def _list_sessions() -> list[dict[str, Any]]:
             first_user = ""
             started_at = ""
             tools: list[str] = []
+            first_user_seen = False
             with open(path, errors="replace") as fh:
                 for line in fh:
                     try:
@@ -209,6 +210,10 @@ def _list_sessions() -> list[dict[str, Any]]:
                                 if isinstance(c, dict) and c.get("type") == "text"
                             ]
                             if texts:
+                                if not first_user_seen:
+                                    first_user_seen = True
+                                    if len(texts[0]) > 1500:
+                                        continue  # harness-injected preamble
                                 first_user = texts[0]
                     elif t == "custom" and o.get("customType") == "tool_execution_start" and len(tools) < 10:
                         tools.append(o.get("data", {}).get("toolName", ""))
