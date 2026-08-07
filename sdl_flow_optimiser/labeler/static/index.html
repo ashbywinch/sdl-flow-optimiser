@@ -98,7 +98,7 @@
 </head>
 <body>
 <header>
-  <h1>S1 labeler</h1>
+  <h1>S1 labeler <span id="ver" style="font-size:12px;color:#888"></span></h1>
   <nav>
     <button id="tab-sessions" class="active">Sessions</button>
     <button id="tab-label">Samples</button>
@@ -125,8 +125,7 @@
   </section>
   <section id="pane-sessions" hidden>
     <div class="bar">Tap a session to open its full contents. Pick two sessions that are the same piece of work, then Associate.</div>
-    <div id="sessions"></div>
-    <div id="selectbar" style="display:none">
+    <div id="sessions"></div>    <div id="selectbar" style="display:none">
       <span id="selectcount"></span>
       <button id="associate-cancel" class="cancel">Clear</button>
       <button id="associate">Associate</button>

@@ -190,6 +190,7 @@ def _list_sessions() -> list[dict[str, Any]]:
             started_at = ""
             tools: list[str] = []
             first_user_seen = False
+            user_messages = 0
             with open(path, errors="replace") as fh:
                 for line in fh:
                     try:
@@ -203,7 +204,7 @@ def _list_sessions() -> list[dict[str, Any]]:
                         title = o.get("title", "")
                     elif t == "message":
                         m = o.get("message", {})
-                        if m.get("role") == "user" and not first_user:
+                        if m.get("role") == "user":
                             texts = [
                                 c.get("text", "")
                                 for c in m.get("content", [])
@@ -214,7 +215,8 @@ def _list_sessions() -> list[dict[str, Any]]:
                                     first_user_seen = True
                                     if len(texts[0]) > 1500:
                                         continue  # harness-injected preamble
-                                first_user = texts[0]
+                                first_user = first_user or texts[0]
+                                user_messages += 1
                     elif t == "custom" and o.get("customType") == "tool_execution_start" and len(tools) < 10:
                         tools.append(o.get("data", {}).get("toolName", ""))
                     if title and first_user and started_at and len(tools) >= 10:
@@ -227,6 +229,8 @@ def _list_sessions() -> list[dict[str, Any]]:
                     "opening": first_user[:160],
                     "started_at": started_at,
                     "tools": dict(Counter(tools).most_common(4)),
+                    "user_messages": user_messages,
+                    "agent_run": user_messages == 0,
                 }
             )
     sessions.sort(key=lambda s: s["started_at"])

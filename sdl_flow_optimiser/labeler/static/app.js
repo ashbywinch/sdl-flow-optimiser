@@ -14,6 +14,7 @@ const PHASE_UI = {
 
 const CHUNK = 100;
 const COLLAPSE_AT = 300;
+const VERSION = "v9-conversation";
 
 const state = {
   samples: [],
@@ -278,9 +279,10 @@ function renderSessions() {
       const row = el("div", "session");
       if (state.selected.includes(s.id)) row.classList.add("selected");
       if (groupedIds.has(s.id)) row.appendChild(el("span", "tag", "grouped"));
+      if (s.agent_run) row.appendChild(el("span", "tag", "agent run — no conversation"));
       const title = el("div", "s-title", `${s.title || "(untitled)"}`);
       row.appendChild(title);
-      row.appendChild(el("div", "s-meta", `${s.started_at.slice(0, 16)} · ${Object.entries(s.tools).map(([t, c]) => `${t}×${c}`).join(" ")}`));
+      row.appendChild(el("div", "s-meta", `${s.started_at.slice(0, 16)} · ${s.user_messages} messages · ${Object.entries(s.tools).map(([t, c]) => `${t}×${c}`).join(" ")}`));
       row.appendChild(el("div", "s-meta", s.opening || ""));
       const rowbtns = el("div", "e-actions");
       const open = el("button", "ok", "Open session →");
@@ -533,3 +535,4 @@ document.getElementById("count").onchange = () => setTimeout(loadSamples, 150);
 refreshSets();
 loadSessions();
 activateTab("sessions");
+document.getElementById("ver").textContent = VERSION;
