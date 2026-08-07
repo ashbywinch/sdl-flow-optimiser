@@ -45,10 +45,10 @@ reading their sessions back and adjudicating it in a phone-usable web tool.
   parser MUST degrade gracefully and report coverage, never silently drop.
   Compactions are parsed but excluded from analysis (user decision).
 - **Harness-injected content is not the user's voice.** Some sessions open
-  with an auto-generated user message (code-review requests with file dumps,
-  >50k chars). It must be filtered from transcripts and openings (rule: the
-  opening user message over 1500 chars is dropped; the user's real openings
-  are under 300).
+  with a machine-generated message (review requests with file dumps) that the
+  user never typed. Such content must never appear in what the user reads
+  back — transcripts and openings show only the user's own words and the
+  agent's responses.
 - **Storage: local Postgres.** One instance on the laptop, pgvector enabled.
   All pipeline outputs persist to the DB — the DB is the record of every
   decision the pipeline made, not just the normalized logs.
@@ -60,8 +60,9 @@ reading their sessions back and adjudicating it in a phone-usable web tool.
   breakdown.
 - **Solo, long-lived, boring.** Personal tool, run on a laptop, maintained by
   one person. Prefer boring, standard tooling (Makefile + Python + SQLAlchemy);
-  no bespoke infra. The labeler is a local FastAPI app served on the LAN
-  without auth — the same trust model as the rest of the personal tooling.
+  no bespoke infra. The verification tool runs on the user's laptop and is
+  reachable from the phone on the home network without login — the same trust
+  model as the rest of the personal tooling.
 - **Cycle time matters more than speed.** Goal is shorter time-to-done and less
   wasted effort, not more output per hour.
 
@@ -86,7 +87,7 @@ reading their sessions back and adjudicating it in a phone-usable web tool.
    - **Session-level phase character** is a second, coarser dimension: the
      opening user message → session kind (lifecycle / discovery /
      implementation / plan→design→implement→PR).
-   - Embedding classifier (pgvector) is the planned secondary for research
+   - An embedding-based classifier is the planned secondary for research
      reads (see Attribution feasibility).
 3. **Findings gate metrics** (S1 resolved — see Attribution feasibility):
    every metric's source attribution is validated by a resolved finding backed
@@ -104,12 +105,13 @@ reading their sessions back and adjudicating it in a phone-usable web tool.
    - Only phases S1 validated may feed metrics (see the gating table).
 5. **Recommend** the single highest-impact actionable change + supporting
    evidence; keep ranked alternatives visible. Advisory only.
-6. **Labeler web app** (`make web`, LAN reachable) — the user's verification
-   surface. Requirements in detail below (Labeler requirements).
-7. **Session association** — the same tool associates sessions that are one
-   piece of work across multiple sessions (plan session → execute session):
-   manual pairing from the session list, remove/undo, grouped badges. The
-   association feeds work-item assembly (S3).
+6. **Verification web tool** (`make web`, reachable from the user's phone on
+   the home network) — the surface where the user reads sessions back,
+   corrects classifications, and groups sessions; requirements in
+   "Verification requirements" below.
+7. **Session association** — linking sessions that are one piece of work
+   across sessions (plan session → execute session), feeding work-item
+   assembly (S3).
 8. **Emit artifact** the omp agent can load and argue about: structured JSON +
    human-readable markdown at a stable path in this repo. The conversation
    happens in omp (point the agent at the artifact); no chat UI in V1.
@@ -162,51 +164,49 @@ on 236 phase-bearing events (4 delegation excluded).
 Lessons baked into the rules: rule ordering (specific before generic —
 `prd` before `design`), mechanism-vs-signal (env/design keywords only on
 read/web_search, never on edits/greps), case normalization, and delegation
-handling. The embedding classifier (pgvector) is the planned next step for
+handling. An embedding-based classifier is the planned next step for
 prd recall; run-level evaluation should follow segmentation (PLAN phase 3).
 
-## Labeler requirements (learned via UX loops, iteration 1 + 2)
+### Verification requirements (learned via UX loops, iteration 1 + 2)
 
 Verified against the persona by fake-user walks (phone viewport) and the
-user's own corrections; recorded in `docs/ux-fixes-plan.md`.
+user's own corrections; the decisions behind these needs are recorded in
+`docs/ux-fixes-plan.md`.
 
-### Reading sessions (the core job)
+**Read the session as the conversation it was.** The user opens any session
+and reads it as the conversation they actually had — their messages and the
+agent's replies in order — so they can recognize their own work. Tool
+actions appear as brief human-readable descriptions, exactly as the harness
+presented them. The user never has to read raw JSON or technical internals
+to understand what happened.
 
-- **The session is the unit of work.** The app opens on the session list, not
-  a sample queue.
-- **Transcript = the conversation.** Sessions open in Conversation mode:
-  the user's messages and the agent's replies in order. Tool calls are
-  hidden by default; an "All" toggle reveals them.
-- **Tool calls render as the harness does**: `tool — human-readable intent`
-  (e.g. `read — Reading the design doc`). NEVER raw JSON args — the user
-  never sees JSON in the harness and must never see it here.
-- **Long messages collapse to a chip** ("14k chars — tap to expand") and
-  expand **inline** with a collapse link. NEVER popups/modals — removed after
-  the user rejected both an overlay and an earlier inline wall.
-- **Browsable, not a wall.** Transcript renders in chunks (100 at a time)
-  with a **sticky bottom bar**: Top · Show more (N left) · Jump to end —
-  always on screen, never buried under content.
-- **Phase chips** (e.g. "Execute 120") jump to the first call of that phase.
-- **Harness-injected opening prompts are filtered** (see Constraints).
-- **Agent-run sessions are flagged** ("agent run — no conversation") and every
-  row shows its message count, so conversational sessions are findable.
+**The conversation is never buried.** Long messages and dense stretches of
+activity never force the user to scroll past a wall of content to continue;
+they can always see where they are, what is left, and how to get to the end
+without losing their place.
 
-### Adjudication
+**The user can find the sessions that matter.** Conversational sessions are
+distinguishable from machine-driven runs at a glance, and each session shows
+enough context (project, when it happened, how much conversation) for the
+user to pick the one they remember.
 
-- **Full phase names, never abbreviations** ("PRD", "Execute", "PR + review").
-- Every Agree/Disagree shows a **saved-verdict toast with Undo**.
-- Disagree optionally records a **corrected phase** + comment; adjudication
-  persists to `s1_labels.json` and folds into the ground truth via
-  `--apply-labels`.
-- **Sample queues** (random / low-confidence / disagreements) with the
-  surrounding context one tap away — secondary to session browsing, which is
-  the primary verification path.
-- Filters auto-apply on change; no dead-feeling controls.
+**The user can correct the analysis in their own words.** For any phase
+classification the user can agree, or disagree and name the correct phase in
+their own language, with a note. Every action gives visible confirmation and
+can be undone.
 
-### Session association
+**The user can judge the uncertain cases.** The classifications the system
+is least sure about are surfaced for review, with the surrounding context
+one step away — while reading the whole session remains the primary way to
+verify.
 
-- Pair two sessions as the same piece of work; **remove/undo** mis-made pairs;
-  "grouped" badges on linked rows; persistent selection bar.
+**The user can group work across sessions.** Sessions that are one piece of
+work can be linked together (a planning session and its execution session);
+mistakes can be undone, and existing groups are visible.
+
+**Phases are named in the user's own words.** PRD, Technical design, Flow
+design, Tickets, Plan, Execute, PR + review, UX loop — never abbreviations
+or internal names.
 
 ## Spikes / investigations
 
@@ -239,9 +239,10 @@ serializes the latest `AnalysisRun` to `analysis/` (committed):
   WIP/throughput/cycle time per project; the identified bottleneck with its
   evidence; one recommendation + ranked alternatives; confidence per metric.
 - Every confidence < threshold is visibly flagged, not presented as fact.
-- **The user can verify the analysis**: opening any conversational session in
-  the labeler shows their own words and the agent's replies on a phone, with
-  no raw JSON, no popups, and the navigation bar always reachable.
+- **The user can verify the analysis on their phone**: opening any
+  conversational session shows the conversation they had — their words and
+  the agent's replies — with no raw JSON, nothing popping up over the
+  content, and the way forward always reachable.
 - **Adjudication is complete for the gated metrics**: the review-bottleneck
   metric does not ship until pr_review recall clears 85% via user-adjudicated
   labels; flow_design metrics do not ship until more samples validate them.
