@@ -65,11 +65,19 @@ and produces — never project-management artifacts.
 - Inputs: derived tables.
 - Outputs: `analysis_runs` (one per `make analyze`), `metrics` (Little's Law
   trio per project × time bucket), `phase_sequences` (SDLC-version
-  frequencies), `bottlenecks` (constraint with queue/utilization/evidence).
-- Operations: `make analyze`.
+  frequencies), `bottlenecks` (constraint with time-share + queue evidence),
+  the derived **event log** (case = work item, activity = phase, timestamp =
+  phase-run start) as a standard CSV/XES export — the contract that lets
+  external process-mining tools consume the data.
+- Operations: `make analyze`; **spike S4** — prototype pm4py (or other
+  log-analysis tools found later) over the event log: discovered
+  directly-follows graph, dotted chart, performance spectrum. Adopt only
+  what earns its weight; the numbers stay hand-rolled.
 - Quality gate: only confidence-validated metrics are computed; every
   metric is per-project and per-bucket (no unbroken aggregates); the
-  suspected review bottleneck is either confirmed with evidence or refuted.
+  bottleneck is confirmed with evidence as **time-share** (which phase
+  consumes the most active time — the solo developer's constraint) plus the
+  review-queue wait; S4 produces a finding on whether the tooling is adopted.
 
 ## Phase 5 — Recommendation + emit + chat loop
 
@@ -82,3 +90,25 @@ and produces — never project-management artifacts.
   nothing below the confidence threshold is emitted; an omp session can
   challenge the recommendation ("but what about this?") citing the evidence
   trail and the reasoning survives or revises under challenge.
+
+## Phase 6 — Code review
+
+- Inputs: the built codebase (stages, labeler, tests, docs).
+- Outputs: reviewed, standards-compliant code; resolved review findings.
+- Operations: branch + PR per the house git workflow; the review bot
+  (pr-agent) reviews with the docs standards in context (PRD, TECHSPEC,
+  coding/testing standards); fix findings until the review is clean.
+- Quality gate: the review reports no standards violations; `make test`
+  green; coverage ≥ 80%; nothing merged to main without a clean review.
+
+## Phase 7 — UX review
+
+- Inputs: the live verification tool (labeler).
+- Outputs: UX findings and fixes; converged walkthroughs;
+  `docs/ux-fixes-plan.md` updated.
+- Operations: fake-user walks (phone viewport) + UX analysis per
+  `skill://ux-process`; fixes land only with user agreement.
+- Quality gate: the fake user completes the verification job — reads a
+  session as the conversation it was, corrects a classification, groups
+  sessions — without hitting the targeted problems; the PRD's verification
+  requirements hold on re-walk.

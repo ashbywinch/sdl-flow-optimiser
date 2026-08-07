@@ -103,8 +103,11 @@ reading their sessions back and adjudicating it in a phone-usable web tool.
      and over time.
    - Little's Law trio: WIP (open PRs, concurrent sessions/work items),
      throughput (items completed / week), cycle time (item start → done).
-   - Bottleneck detection: phase with the longest standing queue / highest
-     utilization — the review queue is the suspected constraint.
+   - Bottleneck detection for a solo developer: the constraint is the user's
+     own time, so the primary signal is **time-share** — which phase consumes
+     the most of the user's active time — alongside the one genuine wait:
+     the review queue (work sitting in review). Waiting-time analysis
+     (Execute → PR+review gaps) supplements the time-share view.
    - Stall metrics: idle gaps (stored raw, never interpreted) marked as task
      switches when a gap in one session overlaps activity in another;
      waiting-on-review time; context switches between projects.
@@ -225,6 +228,13 @@ or internal names.
   reliably connect planning sessions to execution sessions (work-product docs
   only; skills/standards red herrings filtered), with the labeler's manual
   associations as ground truth? Embedding-similarity fallback.
+- **S4 — Log-analysis tooling (spike).** Prototype process-mining tools
+  (pm4py first, others as found) over the derived event log
+  (case=work item, activity=phase, timestamp): discovered directly-follows
+  graph of the real phase topology, dotted chart, performance spectrum.
+  Adopt only what earns its weight — the numbers (variants, waiting times)
+  stay hand-rolled; the library must add structure or visualization we
+  would not hand-build. Never classifies and never touches the phase model.
 
 ## Output artifact
 
