@@ -210,8 +210,7 @@ function renderLabel() {
   if (s.truth_phase) head.appendChild(el("span", "tag", `analyst: ${PHASE_UI[s.truth_phase]}`));
   if (s.delegation) head.appendChild(el("span", "tag", "delegation"));
   card.appendChild(head);
-  card.appendChild(el("div", "intent", s.intent || "(no intent)"));
-  card.appendChild(el("div", "args", s.args && s.args !== "{}" ? s.args : "(no arguments)"));
+  card.appendChild(el("div", "intent", s.intent || s.tool));
   if (s.truth_phase && s.truth_phase !== s.pred_phase) {
     card.appendChild(el("div", "conflict", `Model says ${PHASE_UI[s.pred_phase]} (${s.confidence}) — I said ${PHASE_UI[s.truth_phase]}. Which is right?`));
   }
@@ -416,8 +415,7 @@ function renderTranscript(wrap) {
       if (it.analyst_phase) ehead.appendChild(el("span", "tag", `analyst: ${PHASE_UI[it.analyst_phase]}`));
       if (it.delegation) ehead.appendChild(el("span", "tag", "delegation"));
       row.appendChild(ehead);
-      row.appendChild(el("div", "intent", it.intent || "(no intent)"));
-      if (it.args) row.appendChild(el("div", "args", it.args === "{}" ? "(no arguments)" : it.args.slice(0, 160)));
+      row.appendChild(el("div", "intent", it.intent || it.tool));
       if (it.label) row.appendChild(el("div", "bar", `marked: ${it.label.agree ? "agree" : "disagree"}${it.label.phase ? " → " + PHASE_UI[it.label.phase] : ""}`));
       const actions = el("div", "e-actions");
       const comment = el("input", "comment");
