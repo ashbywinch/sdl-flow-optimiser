@@ -14,20 +14,15 @@ const PHASE_UI = {
 
 const CHUNK = 100;
 const COLLAPSE_AT = 300;
-const VERSION = "v10-no-popups";
+const VERSION = "v11-chat";
 
 const state = {
-  samples: [],
-  idx: 0,
-  picked: null,
-  batch: [],
-  session: null, // {id, transcript, tool_calls}
-  rendered: 0, // how many transcript items are on screen
+  session: null, // {id, transcript, runs, tool_calls}
+  rendered: 0,
   sessionsList: [],
   sessionIdx: -1,
   selected: [],
   associations: [],
-  mode: "conversation", // conversation | all — the transcript is the conversation by default
 };
 
 async function api(path, opts) {
@@ -41,21 +36,6 @@ function el(tag, cls, text) {
   if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
-}
-
-function phasePills(container) {
-  const pick = el("div", "phasepick");
-  for (const [id, name] of Object.entries(PHASE_UI)) {
-    const b = el("button", "", name);
-    b.onclick = () => {
-      state.picked = Number(id);
-      pick.querySelectorAll("button").forEach((x) => x.classList.remove("sel"));
-      b.classList.add("sel");
-    };
-    pick.appendChild(b);
-  }
-  container.appendChild(pick);
-  return pick;
 }
 
 function toast(msg, undoFn) {
@@ -72,214 +52,140 @@ function toast(msg, undoFn) {
   t._timer = setTimeout(() => { t.style.display = "none"; }, 6000);
 }
 
-async function adjudicate(callId, predPhase, agree, phase, comment, after, undoAfter) {
-  await api("/api/labels", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ call_id: callId, agree, phase, comment }),
-  });
-  const verdict = agree ? `Saved: agree — ${PHASE_UI[predPhase]}` : `Saved: disagree — ${PHASE_UI[predPhase]}${phase ? " → " + PHASE_UI[phase] : " (no correction)"}`;
-  toast(verdict, async () => {
-    await api(`/api/labels/${callId}`, { method: "DELETE" });
-    undoAfter && undoAfter();
-    refreshSets();
-  });
-  after && after();
-  refreshSets();
-}
-
 function textBubble(kind, text) {
-  // Long messages collapse to a chip. Expanded, the message becomes a
-  // bounded scrollable box with a sticky collapse bar pinned to its top —
-  // the control stays visible from anywhere inside the content, so the user
-  // never has to scroll to find it again (standard expandable-text pattern).
-  const who = kind === "you" ? "You:" : "Agent:";
+  // Chat bubbles: user right (accent), agent left (paper). Long messages
+  // collapse to a chip; expanded, they are a bounded scrollable box with a
+  // sticky collapse bar — the control stays in reach from anywhere inside.
   const b = el("div", `bubble ${kind}`);
-  if (text.length <= COLLAPSE_AT) {
-    b.textContent = `${who} ${text}`;
-    return b;
-  }
-  b.setAttribute("role", "button");
+  b.appendChild(el("div", "bubble-who", kind === "you" ? "You" : "Agent"));
+  const body = el("div", "bubble-body");
+  b.appendChild(body);
   const chip = () => {
     b.classList.remove("expanded");
-    b.setAttribute("aria-expanded", "false");
-    b.textContent = `${who} ${text.slice(0, 100)}…`;
-    const meta = el("span", "expand", ` (${Math.round(text.length / 1000)}k chars — tap to expand)`);
-    b.appendChild(meta);
+    body.textContent = text.slice(0, 100);
+    if (text.length > COLLAPSE_AT) {
+      const meta = el("span", "expand", ` (${Math.round(text.length / 1000)}k chars — tap to expand)`);
+      body.appendChild(meta);
+    }
   };
   const full = () => {
     b.classList.add("expanded");
-    b.setAttribute("aria-expanded", "true");
-    b.textContent = "";
+    body.textContent = "";
     const bar = el("div", "collapsebar");
     const btn = el("button", "", "✕ collapse");
-    btn.onclick = (ev) => {
-      ev.stopPropagation();
-      chip();
-    };
+    btn.onclick = (ev) => { ev.stopPropagation(); chip(); };
     bar.appendChild(btn);
-    b.appendChild(bar);
-    b.appendChild(document.createTextNode(`${who} ${text}`));
+    body.appendChild(bar);
+    body.appendChild(document.createTextNode(text));
   };
-  chip();
-  b.onclick = () => {
-    if (b.classList.contains("expanded")) {
-      chip();
-    } else {
-      full();
-    }
-  };
+  if (text.length <= COLLAPSE_AT) {
+    body.textContent = text;
+  } else {
+    chip();
+    b.onclick = () => (b.classList.contains("expanded") ? chip() : full());
+  }
   return b;
 }
 
-// ---------- label pane (samples) ----------
+// ---------- activity runs (the unit the user judges) ----------
 
-async function refreshSets() {
-  const s = await api("/api/sample-sets");
-  document.getElementById("sets").textContent =
-    `adjudicable: ${s.total} · low confidence: ${s.lowconf} · disagreements: ${s.disagreements} · labeled: ${s.labeled}`;
-}
+function runBlock(run, sessionId, calls) {
+  const box = el("div", "run");
+  box.id = `run-${run.start}`;
+  const head = el("div", "r-head");
+  head.appendChild(el("span", "", `${run.call_count} tool calls · my guess: `));
+  head.appendChild(el("b", "", `${PHASE_UI[run.phase]} (${run.confidence.toFixed(2)})`));
+  box.appendChild(head);
 
-async function loadSamples() {
-  const kind = document.getElementById("kind").value;
-  const n = document.getElementById("count").value || 20;
-  state.samples = await api(`/api/samples?kind=${kind}&n=${n}`);
-  state.idx = 0;
-  state.picked = null;
-  state.batch = [];
-  renderLabel();
-}
+  // your answer, defaulting to my guess (or your previous verdict)
+  let pickPhase = run.verdict ? run.verdict.phase : run.phase;
+  let comment = run.verdict ? run.verdict.comment : "";
+  const pick = el("div", "r-pick");
+  for (const [id, name] of Object.entries(PHASE_UI)) {
+    const b = el("button", "", name);
+    if (Number(id) === run.phase) b.classList.add("guess"); // dashed = my guess
+    if (Number(id) === pickPhase) b.classList.add("sel");
+    b.onclick = () => {
+      pickPhase = Number(id);
+      pick.querySelectorAll("button").forEach((x) => x.classList.remove("sel"));
+      b.classList.add("sel");
+    };
+    pick.appendChild(b);
+  }
+  box.appendChild(pick);
 
-function openSessionFromLabel(sample) {
-  activateTab("sessions");
-  showSession(sample.session_id);
-}
-
-function contextList(ctx, s) {
-  ctx.textContent = "";
-  ctx.appendChild(el("button", "more", "show context"));
-  ctx._offset = 0;
-  ctx._loaded = false;
-  const btn = ctx.firstChild;
-  btn.onclick = async () => {
-    if (!ctx._loaded) ctx._offset = 0;
-    const body = await api(`/api/samples/${s.call_id}/context?offset=${ctx._offset}`);
-    ctx.textContent = "";
-    let prev = null, run = 0;
-    for (const ev of body.events) {
-      const key = `${ev.phase}|${ev.tool}|${ev.intent}`;
-      if (ev.this_sample) {
-        if (run > 1) ctx.appendChild(el("div", "here", `  … ×${run} identical`));
-        run = 0; prev = null;
-        ctx.appendChild(el("div", "here", `* ${PHASE_UI[ev.phase]} ${ev.confidence.toFixed(2)} ${ev.tool} — ${(ev.intent || "").slice(0, 50)}`));
-      } else if (key === prev) {
-        run += 1;
-      } else {
-        if (run > 1) ctx.appendChild(el("div", "", `  … ×${run} identical`));
-        run = 0; prev = key;
-        ctx.appendChild(el("div", "", `  ${PHASE_UI[ev.phase]} ${ev.confidence.toFixed(2)} ${ev.tool} — ${(ev.intent || "").slice(0, 50)}`));
-      }
-    }
-    if (run > 1) ctx.appendChild(el("div", "", `  … ×${run} identical`));
-    ctx._loaded = true;
-    if (body.more_after) {
-      const more = el("button", "more", "more ↓");
-      more.onclick = () => { ctx._offset += 10; btn.onclick(); };
-      ctx.appendChild(more);
-    }
+  const actions = el("div", "r-actions");
+  const commentEl = el("input", "r-comment");
+  commentEl.placeholder = "comment (optional)";
+  commentEl.value = comment;
+  const ok = el("button", "r-ok", run.verdict ? "Update" : "Confirm");
+  const save = async () => {
+    await api(`/api/runs/${encodeURIComponent(run.run_id)}/verdict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phase: pickPhase, comment: commentEl.value }),
+    });
+    toast(`Saved: this stretch was ${PHASE_UI[pickPhase]}`, async () => {
+      await api(`/api/runs/${encodeURIComponent(run.run_id)}/verdict`, { method: "DELETE" });
+      showSession(sessionId);
+    });
+    showSession(sessionId);
   };
-}
-
-function renderLabel() {
-  const q = document.getElementById("queue");
-  q.textContent = "";
-  if (state.samples.length === 0) {
-    q.appendChild(el("div", "done", "Nothing to adjudicate in this bucket."));
-    return;
-  }
-  if (state.idx >= state.samples.length) {
-    const s = el("div", "summary");
-    s.appendChild(el("div", "s-title", "Batch complete"));
-    const agrees = state.batch.filter((b) => b.verdict === "agree").length;
-    const disagrees = state.batch.length - agrees;
-    s.appendChild(el("div", "hint", `${state.batch.length} marked · ${agrees} agree · ${disagrees} disagree`));
-    const ul = el("ul");
-    for (const b of state.batch) ul.appendChild(el("li", "", `${b.phase ? PHASE_UI[b.phase] : PHASE_UI[b.pred]} — ${b.session} — ${b.intent.slice(0, 50)}`));
-    s.appendChild(ul);
-    const more = el("button", "ok", "Load more");
-    more.style.marginTop = "10px";
-    more.onclick = loadSamples;
-    s.appendChild(more);
-    q.appendChild(s);
-    return;
-  }
-  const s = state.samples[state.idx];
-  const card = el("div", "card");
-  const head = el("div", "head");
-  const tag = el("span", "tag", s.session);
-  tag.style.cursor = "pointer";
-  tag.title = "open session";
-  tag.onclick = () => openSessionFromLabel(s);
-  head.appendChild(tag);
-  head.appendChild(el("span", "tag", `#${state.idx + 1}/${state.samples.length}`));
-  const phaseTxt = `${PHASE_UI[s.pred_phase]} (${s.confidence})`;
-  head.appendChild(el("span", "phase", `pred ${phaseTxt}`));
-  if (s.truth_phase) head.appendChild(el("span", "tag", `analyst: ${PHASE_UI[s.truth_phase]}`));
-  if (s.delegation) head.appendChild(el("span", "tag", "delegation"));
-  card.appendChild(head);
-  card.appendChild(el("div", "intent", s.intent || s.tool));
-  if (s.truth_phase && s.truth_phase !== s.pred_phase) {
-    card.appendChild(el("div", "conflict", `Model says ${PHASE_UI[s.pred_phase]} (${s.confidence}) — I said ${PHASE_UI[s.truth_phase]}. Which is right?`));
-  }
-  if (s.label) {
-    card.appendChild(el("div", "bar", `already marked: ${s.label.agree ? "agree" : "disagree"}${s.label.phase ? " → " + PHASE_UI[s.label.phase] : ""}`));
-  }
-  const ctx = el("div", "ctx");
-  contextList(ctx, s);
-  card.appendChild(ctx);
-  const openBtn = el("button", "bad", "Open session →");
-  openBtn.style.marginTop = "8px";
-  openBtn.onclick = () => openSessionFromLabel(s);
-  card.appendChild(openBtn);
-  const actions = el("div", "actions");
-  const comment = el("input", "comment");
-  comment.placeholder = "comment (optional)";
-  const ok = el("button", "ok", "✓ Agree");
-  const bad = el("button", "bad", "✗ Disagree");
-  const submit = async (agree, phase) => {
-    await adjudicate(
-      s.call_id,
-      s.pred_phase,
-      agree,
-      phase,
-      comment.value,
-      () => {
-        state.batch.push({ verdict: agree ? "agree" : "disagree", phase, pred: s.pred_phase, session: s.session, intent: s.intent });
-        state.idx += 1;
-        state.picked = null;
-        renderLabel();
-      },
-      () => {
-        // undo: return to the sample that was just marked, drop it from the
-        // batch summary (its label was deleted), don't advance again
-        state.idx = Math.max(0, state.idx - 1);
-        state.batch.pop();
-        state.picked = null;
-        renderLabel();
-      }
-    );
-  };
-  ok.onclick = () => submit(true, null);
-  bad.onclick = () => submit(false, state.picked);
+  ok.onclick = save;
   actions.appendChild(ok);
-  actions.appendChild(bad);
-  card.appendChild(actions);
-  phasePills(card).className = "phasepick pickbtn";
-  card.appendChild(comment);
-  q.appendChild(card);
+  actions.appendChild(commentEl);
+  box.appendChild(actions);
+
+  if (run.verdict) {
+    box.appendChild(el("div", "r-verdict", `you said: ${PHASE_UI[run.verdict.phase]} — tap Update to change`));
+  }
+
+  const callsBox = el("div", "r-calls");
+  callsBox.hidden = true;
+  const toggle = el("button", "more", "show calls");
+  toggle.onclick = () => {
+    if (callsBox.hidden) {
+      callsBox.textContent = "";
+      for (const c of calls) {
+        if (c.kind !== "tool_call") continue;
+        callsBox.appendChild(el("div", "", `${c.tool} — ${c.intent || ""}`));
+      }
+      callsBox.hidden = false;
+      toggle.textContent = "hide calls";
+    } else {
+      callsBox.hidden = true;
+      toggle.textContent = "show calls";
+    }
+  };
+  box.appendChild(toggle);
+  box.appendChild(callsBox);
+  return box;
 }
 
 // ---------- sessions pane ----------
+
+function fmtRange(startIso, endIso) {
+  if (!startIso) return "";
+  const s = new Date(startIso);
+  const e = endIso ? new Date(endIso) : s;
+  const time = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const date = (d) => d.toLocaleDateString([], { day: "numeric", month: "short" });
+  if (s.toDateString() === e.toDateString()) return `${date(s)} ${time(s)}–${time(e)}`;
+  return `${date(s)} ${time(s)} – ${date(e)} ${time(e)}`;
+}
+
+function updateSessionBar() {
+  const bar = document.getElementById("sessbar");
+  if (!state.session) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "flex";
+  const left = state.session.transcript.length - state.rendered;
+  document.getElementById("sess-more").textContent = left > 0 ? `Show more (${left} left)` : "All shown";
+  document.getElementById("sess-more").disabled = left <= 0;
+  document.getElementById("sess-end").textContent = "Jump to end";
+}
 
 async function loadSessions() {
   state.sessionsList = await api("/api/sessions");
@@ -366,31 +272,31 @@ async function refreshAssociations() {
   wrap.appendChild(ul);
 }
 
-// ---------- session transcript (chunked) ----------
+// ---------- session as a chat ----------
 
-function fmtRange(startIso, endIso) {
-  if (!startIso) return "";
-  const s = new Date(startIso);
-  const e = endIso ? new Date(endIso) : s;
-  const time = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const date = (d) => d.toLocaleDateString([], { day: "numeric", month: "short" });
-  if (s.toDateString() === e.toDateString()) return `${date(s)} ${time(s)}–${time(e)}`;
-  return `${date(s)} ${time(s)} – ${date(e)} ${time(e)}`;
-}
-
-function updateSessionBar() {
-  const bar = document.getElementById("sessbar");
-  if (!state.session) {
-    bar.style.display = "none";
-    return;
+function renderTranscript(wrap) {
+  const detail = state.session;
+  [...wrap.querySelectorAll(".bubble,.run")].forEach((n) => n.remove());
+  const t = detail.transcript;
+  const runs = detail.runs;
+  let runIdx = 0;
+  const end = Math.min(state.rendered, t.length);
+  for (let i = 0; i < end; i++) {
+    const it = t[i];
+    if (it.kind === "user") {
+      wrap.appendChild(textBubble("you", it.text));
+    } else if (it.kind === "assistant") {
+      wrap.appendChild(textBubble("agent", it.text));
+    } else if (it.kind === "tool_call") {
+      while (runIdx < runs.length && runs[runIdx].start < i) runIdx++;
+      const run = runs[runIdx];
+      if (run && run.start === i) {
+        wrap.appendChild(runBlock(run, detail.id, t.slice(run.start, run.end + 1)));
+        i = run.end;
+      }
+    }
   }
-  bar.style.display = "flex";
-  const visible = visibleItems(state.session.transcript);
-  const shown = visible.filter((it) => state.session.transcript.indexOf(it) < state.rendered).length;
-  const left = visible.length - shown;
-  document.getElementById("sess-more").textContent = left > 0 ? `Show more (${left} left)` : "All shown";
-  document.getElementById("sess-more").disabled = left <= 0;
-  document.getElementById("sess-end").textContent = "Jump to end";
+  updateSessionBar();
 }
 
 function showSession(id) {
@@ -416,118 +322,33 @@ function showSession(id) {
     wrap.appendChild(head);
     wrap.appendChild(el("div", "s-title", `Session · ${meta.title || "(untitled)"}`));
     wrap.appendChild(el("div", "s-meta", `${meta.repo_name || ""} · ${fmtRange(meta.started_at, meta.ended_at)} · ${detail.tool_calls} tool calls`));
-    const mode = el("div", "chips");
-    const conv = el("button", state.mode === "conversation" ? "sel" : "", "Conversation");
-    const all = el("button", state.mode === "all" ? "sel" : "", "All");
-    conv.onclick = () => { state.mode = "conversation"; showSession(id); };
-    all.onclick = () => { state.mode = "all"; showSession(id); };
-    mode.appendChild(conv);
-    mode.appendChild(all);
-    wrap.appendChild(mode);
     const counts = {};
-    for (const it of detail.transcript) {
-      if (it.kind === "tool_call") counts[it.pred_phase] = (counts[it.pred_phase] || 0) + 1;
-    }
+    for (const r of detail.runs) counts[r.phase] = (counts[r.phase] || 0) + 1;
     const chips = el("div", "chips");
     for (const [ph, c] of Object.entries(counts)) {
       const chip = el("button", "", `${PHASE_UI[Number(ph)]} ${c}`);
       chip.onclick = () => {
-        const first = detail.transcript.findIndex((it) => it.kind === "tool_call" && it.pred_phase === Number(ph));
-        if (first >= 0 && first >= state.rendered) {
-          state.rendered = first + 1;
-          renderTranscript(wrap);
+        const run = detail.runs.find((r) => r.phase === Number(ph));
+        if (run) {
+          if (run.end >= state.rendered) {
+            state.rendered = run.end + 1;
+            renderTranscript(wrap);
+          }
+          const node = document.getElementById(`run-${run.start}`);
+          if (node) node.scrollIntoView({ behavior: "smooth" });
         }
-        const node = document.getElementById(`tc-${first}`);
-        if (node) node.scrollIntoView({ behavior: "smooth" });
       };
       chips.appendChild(chip);
     }
     wrap.appendChild(chips);
+    wrap.classList.add("chat");
     renderTranscript(wrap);
   });
 }
 
-function visibleItems(t) {
-  return t.filter((it) => state.mode === "all" || (it.kind !== "tool_call" && it.kind !== "tool_result"));
-}
-
-function renderTranscript(wrap) {
-  const detail = state.session;
-  // remove previously rendered items except header/chips
-  [...wrap.querySelectorAll(".bubble,.event")].forEach((n) => n.remove());
-  const t = detail.transcript;
-  const end = Math.min(state.rendered, t.length);
-  for (let i = 0; i < end; i++) {
-    const it = t[i];
-    if (it.kind === "user") {
-      wrap.appendChild(textBubble("you", it.text));
-    } else if (it.kind === "assistant") {
-      wrap.appendChild(textBubble("agent", it.text));
-    } else if (it.kind === "tool_call" && state.mode === "all") {
-      const row = el("div", "event compact");
-      row.id = `tc-${i}`;
-      const line = el("div", "tline");
-      line.appendChild(el("span", "tag", it.tool));
-      line.appendChild(el("span", "tintent", it.intent || it.tool));
-      line.appendChild(el("span", "tphase", `${PHASE_UI[it.pred_phase]} ${it.confidence}`));
-      if (it.analyst_phase) line.appendChild(el("span", "tanalyst", `me: ${PHASE_UI[it.analyst_phase]}`));
-      if (it.delegation) line.appendChild(el("span", "tag", "delegation"));
-      if (it.label) line.appendChild(el("span", "tmarked", it.label.agree ? "✓ marked" : `✗ ${it.label.phase ? PHASE_UI[it.label.phase] : "marked"}`));
-      row.appendChild(line);
-      const adj = el("div", "adjudicate");
-      const actions = el("div", "e-actions");
-      const comment = el("input", "comment");
-      comment.placeholder = "comment (optional)";
-      const ok = el("button", "ok", "✓ Agree");
-      const bad = el("button", "bad", "✗ Disagree");
-      const submit = async (agree, phase) => {
-        await adjudicate(
-          it.call_id,
-          it.pred_phase,
-          agree,
-          phase,
-          comment.value,
-          () => showSession(detail.id),
-          () => showSession(detail.id)
-        );
-      };
-      ok.onclick = () => submit(true, null);
-      bad.onclick = () => submit(false, state.picked);
-      actions.appendChild(ok);
-      actions.appendChild(bad);
-      adj.appendChild(actions);
-      phasePills(adj).className = "phasepick pickbtn";
-      adj.appendChild(comment);
-      adj.onclick = (e) => e.stopPropagation();
-      row.appendChild(adj);
-      row.onclick = () => row.classList.toggle("open");
-      wrap.appendChild(row);
-    }
-  }
-  updateSessionBar();
-}
-
 // ---------- boot ----------
 
-function activateTab(name) {
-  const labelTab = document.getElementById("tab-label");
-  const sessTab = document.getElementById("tab-sessions");
-  if (name === "sessions") {
-    sessTab.classList.add("active");
-    labelTab.classList.remove("active");
-    document.getElementById("pane-sessions").hidden = false;
-    document.getElementById("pane-label").hidden = true;
-  } else {
-    labelTab.classList.add("active");
-    sessTab.classList.remove("active");
-    document.getElementById("pane-label").hidden = false;
-    document.getElementById("pane-sessions").hidden = true;
-  }
-}
-
-document.getElementById("tab-label").onclick = () => activateTab("label");
 document.getElementById("tab-sessions").onclick = () => {
-  activateTab("sessions");
   if (state.session) {
     showSession(state.session.id);
   } else if (state.sessionsList.length === 0) {
@@ -572,11 +393,6 @@ document.getElementById("sess-end").onclick = () => {
   renderTranscript(wrap);
   window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 };
-document.getElementById("load").onclick = loadSamples;
-document.getElementById("kind").onchange = () => setTimeout(loadSamples, 150);
-document.getElementById("count").onchange = () => setTimeout(loadSamples, 150);
 
-refreshSets();
 loadSessions();
-activateTab("sessions");
 document.getElementById("ver").textContent = VERSION;

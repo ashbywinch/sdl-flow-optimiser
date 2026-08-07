@@ -10,19 +10,75 @@ are noise at transcript scale; tool results leave a thin marker.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from sdl_flow_optimiser.findings.attribution_feasibility import classify_with_context
 from sdl_flow_optimiser.findings.labels import Label
-from sdl_flow_optimiser.phase_attribution import PhasePrediction
+from sdl_flow_optimiser.phase_attribution import PhasePrediction, classify_with_context
 
 # Harness-injected preamble: the opening "user" message in some sessions is
 # a machine-generated prompt (code-review requests, file dumps) — huge and
 # structured, not the user's voice. The user's real opening is short.
 # Skip the FIRST user message when it exceeds this length.
 PREAMBLE_MAX = 1500
+
+
+@dataclass(frozen=True)
+class Run:
+    """A same-phase contiguous stretch of tool calls — the unit the user
+    adjudicates. Individual tool calls are not judged: only a stretch in
+    its chat context can be classified accurately."""
+
+    run_id: str
+    phase: int
+    confidence: float
+    start: int  # transcript item index (inclusive)
+    end: int  # transcript item index (inclusive)
+    call_ids: tuple[str, ...]
+    first_intent: str
+
+
+def compute_runs(items: list[dict[str, Any]], session_id: str) -> list[Run]:
+    """Maximal consecutive same-phase tool-call stretches. Any non-tool-call
+    item (a user or agent message) breaks contiguity and starts a new run.
+    run_id is stable across reads of the same frozen session."""
+    runs: list[Run] = []
+    current: list[dict[str, Any]] = []
+    current_start = -1
+    current_phase: int | None = None
+    for i, it in enumerate(items):
+        if it["kind"] != "tool_call":
+            if current:
+                runs.append(_finish_run(current, current_start, session_id))
+                current = []
+                current_phase = None
+            continue
+        if current_phase is not None and it["pred_phase"] != current_phase:
+            runs.append(_finish_run(current, current_start, session_id))
+            current = []
+        if not current:
+            current_start = i
+            current_phase = it["pred_phase"]
+        current.append(it)
+    if current:
+        runs.append(_finish_run(current, current_start, session_id))
+    return runs
+
+
+def _finish_run(calls: list[dict[str, Any]], start: int, session_id: str) -> Run:
+    phase = int(calls[0]["pred_phase"])
+    confidence = max(float(c["confidence"]) for c in calls)
+    end = start + len(calls) - 1
+    return Run(
+        run_id=f"{session_id}#{start}-{end}",
+        phase=phase,
+        confidence=confidence,
+        start=start,
+        end=end,
+        call_ids=tuple(str(c["call_id"]) for c in calls),
+        first_intent=str(calls[0].get("intent", "") or calls[0].get("tool", "")),
+    )
 
 
 def extract_transcript(path: Path) -> list[dict[str, Any]]:

@@ -19,7 +19,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from sdl_flow_optimiser.findings.labels import Labels
-from sdl_flow_optimiser.phase_attribution import PHASE_NAMES, PhasePrediction, assign_phase, is_delegation
+from sdl_flow_optimiser.findings.transcript import compute_runs, extract_transcript
+from sdl_flow_optimiser.phase_attribution import (
+    PHASE_NAMES,
+    classify_with_context,
+)
 
 STORE = Path.home() / ".omp" / "agent" / "sessions"
 HERE = Path(__file__).parent
@@ -159,56 +163,35 @@ def session_openings() -> list[dict[str, str]]:
     return openings
 
 
-def _nearest_phase(preds: list[tuple[PhasePrediction, bool]], i: int) -> int | None:
-    """Phase of the nearest non-delegation event — the parent context."""
-    for dist in range(1, len(preds)):
-        for j in (i - dist, i + dist):
-            if 0 <= j < len(preds) and not preds[j][1]:
-                return preds[j][0].phase_id
-    return None
-
-
-def classify_with_context(execs: list[dict[str, str]]) -> list[tuple[PhasePrediction, bool]]:
-    """Per-event attribution with delegation inheritance.
-
-    Delegation events (task spawns, hub subagent coordination) are not
-    phase-bearing: the work happens in the subagent's session, so the parent
-    event takes the phase of the nearest non-delegation activity.
-    """
-    n = len(execs)
-    preds: list[tuple[PhasePrediction, bool]] = []
-    for pos, ex in enumerate(execs):
-        delegation = is_delegation(ex["tool"], ex["intent"])
-        position_ratio = pos / max(n - 1, 1)
-        pred = assign_phase(ex["tool"], ex["intent"], ex["args"], position_ratio)
-        preds.append((pred, delegation))
-    for i, (_pred, delegation) in enumerate(preds):
-        if delegation:
-            inherited = _nearest_phase(preds, i)
-            if inherited is not None:
-                preds[i] = (PhasePrediction(inherited, 0.5, "delegation-context"), True)
-    return preds
-
-
 def apply_labels(labels_path: Path | None = None, ground_truth_path: Path | None = None) -> int:
-    """Fold user adjudication into the ground truth: a disagreement with a
-    corrected phase updates the label; agreements and comment-only
-    disagreements keep it. Reads the append-only label store (latest
-    non-deleted verdict per sample). Idempotent — re-running changes
-    nothing."""
+    """Fold user adjudication into the ground truth.
+
+    Run verdicts (the primary path): each verdict's phase applies to every
+    call in that run. Per-call labels (legacy path): a disagreement with a
+    corrected phase updates that call. Reads the append-only stores (latest
+    non-deleted records). Idempotent — re-running changes nothing."""
     labels_path = labels_path or (HERE / "s1_labels.jsonl")
     ground_truth_path = ground_truth_path or GROUND_TRUTH_PATH
     truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
+    stores = Labels(labels_path)
     applied = 0
-    for call_id, label in Labels(labels_path).latest_labels_map().items():
-        if (
-            not label.agree
-            and label.phase is not None
-            and label.phase in PHASE_NAMES
-            and truth.get(call_id) != label.phase
-        ):
-            truth[call_id] = label.phase
+
+    def set_phase(call_id: str, phase: int) -> None:
+        nonlocal applied
+        if truth.get(call_id) != phase:
+            truth[call_id] = phase
             applied += 1
+
+    for path, _label in find_files():
+        items = extract_transcript(path)
+        for run in compute_runs(items, path.name):
+            verdict = stores.latest_run_verdict(run.run_id)
+            if verdict is not None and verdict.phase in PHASE_NAMES:
+                for call_id in run.call_ids:
+                    set_phase(call_id, verdict.phase)
+    for call_id, label in stores.latest_labels_map().items():
+        if not label.agree and label.phase is not None and label.phase in PHASE_NAMES:
+            set_phase(call_id, label.phase)
     ground_truth_path.write_text(json.dumps(truth) + "\n", encoding="utf-8")
     print(f"applied {applied} corrections to ground truth")
     return 0

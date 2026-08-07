@@ -40,6 +40,16 @@ class Association:
     created_at_ms: int
 
 
+@dataclass(frozen=True)
+class RunVerdict:
+    """The user's adjudication of one activity run: the phase they say it was."""
+
+    run_id: str
+    phase: int
+    comment: str
+    updated_at_ms: int
+
+
 def _label_from_line(line: dict[str, Any]) -> Label:
     return Label(
         call_id=str(line["call_id"]),
@@ -52,6 +62,15 @@ def _label_from_line(line: dict[str, Any]) -> Label:
 
 def _created_ms(line: dict[str, Any]) -> int:
     return int(line["created_at_ms"])
+
+
+def _run_verdict_from_line(line: dict[str, Any]) -> RunVerdict:
+    return RunVerdict(
+        run_id=str(line["run_id"]),
+        phase=int(line["phase"]),
+        comment=str(line.get("comment", "")),
+        updated_at_ms=int(line["updated_at_ms"]),
+    )
 
 
 class Labels:
@@ -154,3 +173,37 @@ class Labels:
             else:
                 active[key] = Association(a=key[0], b=key[1], created_at_ms=_created_ms(line))
         return list(active.values())
+
+    # ---- run verdicts ----
+
+    def add_run_verdict(self, run_id: str, phase: int, comment: str) -> RunVerdict:
+        verdict = RunVerdict(run_id=run_id, phase=phase, comment=comment, updated_at_ms=int(time.time() * 1000))
+        self._append(self._labels_path, {"kind": "run_verdict", **asdict(verdict)})
+        return verdict
+
+    def remove_run_verdict(self, run_id: str) -> None:
+        """Soft delete: a tombstone supersedes the run's verdict history."""
+        self._append(
+            self._labels_path,
+            {"kind": "run_verdict", "run_id": run_id, "deleted": True, "updated_at_ms": int(time.time() * 1000)},
+        )
+
+    def latest_run_verdict(self, run_id: str) -> RunVerdict | None:
+        for line in reversed(self._read(self._labels_path)):
+            if line.get("kind") != "run_verdict" or line.get("run_id") != run_id:
+                continue
+            return None if line.get("deleted") else _run_verdict_from_line(line)
+        return None
+
+    def latest_run_verdicts(self) -> dict[str, RunVerdict]:
+        """run_id -> newest non-deleted verdict (a tombstone removes)."""
+        result: dict[str, RunVerdict] = {}
+        for line in self._read(self._labels_path):
+            if line.get("kind") != "run_verdict":
+                continue
+            run_id = str(line["run_id"])
+            if line.get("deleted"):
+                result.pop(run_id, None)
+            else:
+                result[run_id] = _run_verdict_from_line(line)
+        return result

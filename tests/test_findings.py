@@ -13,12 +13,12 @@ import pytest
 from sdl_flow_optimiser.findings.attribution_feasibility import (
     PER_SESSION,
     apply_labels,
-    classify_with_context,
     confirm,
     find_files,
     sample_execs,
     session_openings,
 )
+from sdl_flow_optimiser.phase_attribution import classify_with_context
 
 HERE = Path(__file__).resolve().parent.parent / "sdl_flow_optimiser" / "findings"
 

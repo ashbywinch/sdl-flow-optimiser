@@ -115,6 +115,15 @@ Locked by the PRD; each must prove its claim before dependent metrics ship.
   `PR`, `AnalysisRun`, `Metric`, `PhaseSequence`, `Bottleneck`,
   `Recommendation`, `CandidateLever`, `Finding`). Derived-layer tables are
   classes too, not schema sketches.
+- **Labeler/findings objects are part of the model too.** The verification
+  surface introduces its own domain objects, held in the `findings/`
+  layer (evidence) and consumed by the labeler: `Transcript` (the session
+  read as a conversation), `Run` (a same-phase stretch of tool calls — the
+  unit the user adjudicates), `Label` (one adjudication), `Association` (a
+  session pair that is one piece of work), `RunVerdict` (the user's phase
+  for a run), and `Labels` (the append-only JSONL store of labels,
+  associations, and run verdicts, with tombstones). These are part of the
+  object model; a new one is a model change, not a free refactor.
 - **All outputs live in the DB.** Metrics, recommendations, findings are
   persisted rows per `AnalysisRun` — the DB is the record of every pipeline
   decision (PRD: "DB is the record, not just normalized logs"). `emit` is a

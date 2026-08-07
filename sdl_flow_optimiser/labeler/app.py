@@ -17,16 +17,11 @@ from typing import Any
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from sdl_flow_optimiser.findings.attribution_feasibility import (
-    STORE,
-    classify_with_context,
-    extract_executions,
-    load_ground_truth,
-)
+from sdl_flow_optimiser.findings.attribution_feasibility import STORE, extract_executions, load_ground_truth
 from sdl_flow_optimiser.findings.labels import ASSOCIATIONS_PATH, LABELS_PATH, Labels
+from sdl_flow_optimiser.findings.transcript import annotate_transcript, compute_runs, extract_transcript
 from sdl_flow_optimiser.labeler.samples import Sample, build_samples, sample_counts, select_samples
-from sdl_flow_optimiser.labeler.transcript import annotate_transcript, extract_transcript
-from sdl_flow_optimiser.phase_attribution import PHASE_NAMES
+from sdl_flow_optimiser.phase_attribution import PHASE_NAMES, classify_with_context
 
 STATIC = Path(__file__).parent / "static"
 WINDOW = 5
@@ -135,13 +130,45 @@ def create_app(
             raise HTTPException(status_code=404, detail="session not on this machine")
         items = extract_transcript(path)
         annotate_transcript(items, load_ground_truth(), stores.latest_labels_map())
+        runs = compute_runs(items, session_id)
+        verdicts = stores.latest_run_verdicts()
         tool_calls = [it for it in items if it["kind"] == "tool_call"]
-        return {"id": session_id, "transcript": items, "tool_calls": len(tool_calls)}
+        return {
+            "id": session_id,
+            "transcript": items,
+            "tool_calls": len(tool_calls),
+            "runs": [
+                {
+                    "run_id": r.run_id,
+                    "phase": r.phase,
+                    "confidence": r.confidence,
+                    "start": r.start,
+                    "end": r.end,
+                    "call_count": len(r.call_ids),
+                    "first_intent": r.first_intent,
+                    "verdict": asdict(verdicts[r.run_id]) if r.run_id in verdicts else None,
+                }
+                for r in runs
+            ],
+        }
 
     @app.delete("/api/labels/{call_id}")
     def delete_label_endpoint(call_id: str) -> dict[str, bool]:
         """Undo an adjudication (append-only tombstone)."""
         stores.remove_label(call_id)
+        return {"ok": True}
+
+    @app.post("/api/runs/{run_id}/verdict")
+    def run_verdict(run_id: str, phase: int = Body(...), comment: str = Body("")) -> dict[str, Any]:
+        """The user's verdict on one activity run: the phase they say it was
+        (defaults to the guess when they confirm)."""
+        if phase not in PHASE_NAMES:
+            raise HTTPException(status_code=400, detail=f"phase must be one of {sorted(PHASE_NAMES)}")
+        return asdict(stores.add_run_verdict(run_id, phase, comment))
+
+    @app.delete("/api/runs/{run_id}/verdict")
+    def delete_run_verdict(run_id: str) -> dict[str, bool]:
+        stores.remove_run_verdict(run_id)
         return {"ok": True}
 
     @app.get("/api/associations")

@@ -123,3 +123,34 @@ def assign_phase(tool: str, intent: str, args: str, position_ratio: float | None
     if tool == "bash":
         return PhasePrediction(6, 0.6, "bash")
     return PhasePrediction(6, 0.3, "fallback")
+
+
+def _nearest_phase(preds: list[tuple[PhasePrediction, bool]], i: int) -> int | None:
+    """Phase of the nearest non-delegation event — the parent context."""
+    for dist in range(1, len(preds)):
+        for j in (i - dist, i + dist):
+            if 0 <= j < len(preds) and not preds[j][1]:
+                return preds[j][0].phase_id
+    return None
+
+
+def classify_with_context(execs: list[dict[str, str]]) -> list[tuple[PhasePrediction, bool]]:
+    """Per-event attribution with delegation inheritance.
+
+    Delegation events (task spawns, hub subagent coordination) are not
+    phase-bearing: the work happens in the subagent's session, so the parent
+    event takes the phase of the nearest non-delegation activity.
+    """
+    n = len(execs)
+    preds: list[tuple[PhasePrediction, bool]] = []
+    for pos, ex in enumerate(execs):
+        delegation = is_delegation(ex["tool"], ex["intent"])
+        position_ratio = pos / max(n - 1, 1)
+        pred = assign_phase(ex["tool"], ex["intent"], ex["args"], position_ratio)
+        preds.append((pred, delegation))
+    for i, (_pred, delegation) in enumerate(preds):
+        if delegation:
+            inherited = _nearest_phase(preds, i)
+            if inherited is not None:
+                preds[i] = (PhasePrediction(inherited, 0.5, "delegation-context"), True)
+    return preds

@@ -16,12 +16,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypedDict
 
-from sdl_flow_optimiser.findings.attribution_feasibility import (
-    classify_with_context,
-    load_ground_truth,
-    sample_execs,
-)
+from sdl_flow_optimiser.findings.attribution_feasibility import load_ground_truth, sample_execs
 from sdl_flow_optimiser.findings.labels import Labels
+from sdl_flow_optimiser.phase_attribution import classify_with_context
 
 DUMP_PATH = Path(__file__).resolve().parent.parent / "findings" / "s1_dump.jsonl"
 

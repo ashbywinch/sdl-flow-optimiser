@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 
 from sdl_flow_optimiser.findings.attribution_feasibility import find_files
 from sdl_flow_optimiser.findings.labels import Label, Labels
+from sdl_flow_optimiser.findings.transcript import extract_transcript
 from sdl_flow_optimiser.labeler.app import _repo_display_name, create_app
 from sdl_flow_optimiser.labeler.samples import build_samples, sample_counts, select_samples
-from sdl_flow_optimiser.labeler.transcript import extract_transcript
 
 
 def _store_present() -> bool:
