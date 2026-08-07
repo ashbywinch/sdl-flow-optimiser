@@ -21,18 +21,16 @@ from pathlib import Path
 from typing import Any
 
 from sdl_flow_optimiser.findings.labels import Labels
-from sdl_flow_optimiser.findings.transcript import PREAMBLE_MAX, Transcript
+from sdl_flow_optimiser.findings.transcript import PREAMBLE_MAX, Run, Transcript
 from sdl_flow_optimiser.phase_attribution import (
     PHASE_NAMES,
     Execution,
-    classify_with_context,
 )
 
 STORE = Path.home() / ".omp" / "agent" / "sessions"
 HERE = Path(__file__).parent
 GROUND_TRUTH_PATH = HERE / "s1_ground_truth.json"
 DUMP_PATH = HERE / "s1_dump.jsonl"
-PER_SESSION = 60  # sampled executions per session
 
 
 @dataclass(frozen=True)
@@ -55,43 +53,50 @@ class Opening:
 
 
 @dataclass(frozen=True)
-class DumpRow(Execution):
-    """One sampled execution in the committed dump: an Execution plus its
-    sample label and session file name."""
+class DumpRow:
+    """One phase in the committed dump: the span of the human's work with
+    its predicted phase and the calls that produced the prediction."""
 
-    label: str = ""
-    session: str = ""
+    label: str
+    session: str
+    phase_id: str
+    start: int
+    end: int
+    user: str
+    pred_phase: int
+    confidence: float
+    calls: tuple[Execution, ...]
 
 
 @dataclass(frozen=True)
 class ReportRow:
-    """One confirmation line: tool, intent, ground truth, prediction,
-    confidence, delegation flag, and session tag."""
+    """One phase in the confirmation list: the human's opening words, the
+    ground truth (None until labeled), the prediction, confidence, tool
+    count, and the session tag."""
 
-    tool: str
-    intent: str
-    truth: int
+    user: str
+    truth: int | None
     pred: int
     confidence: float
-    delegation: bool
+    tools: int
     tag: str
 
 
 @dataclass(frozen=True)
 class RowGroups:
-    """Confirmation rows partitioned by adjudication need."""
+    """Phases partitioned by adjudication need: unlabeled first (the
+    primary ask), then disagreements, then agreed-but-low-confidence."""
 
+    unlabeled: list[ReportRow]
     disagreements: list[ReportRow]
     low_conf_agreed: list[ReportRow]
-    delegations: list[ReportRow]
 
 
 @dataclass(frozen=True)
 class PredictionError:
-    """One misattribution worth surfacing: the truth vs the prediction."""
+    """One misattributed phase: its opening words and truth vs prediction."""
 
-    tool: str
-    intent: str
+    user: str
     truth: int
     pred: int
     confidence: float
@@ -99,12 +104,12 @@ class PredictionError:
 
 @dataclass(frozen=True)
 class Evaluation:
-    """The S1 experiment's numbers: agreement, per-phase precision/recall,
-    the confusion matrix, and the lowest-confidence errors."""
+    """The S1 experiment's numbers: phase-level agreement, per-phase
+    precision/recall, the confusion matrix, and the lowest-confidence
+    misattributions."""
 
     correct: int
     total: int
-    delegation_n: int
     by_phase: dict[int, dict[str, int]]
     confusion: dict[tuple[int, int], int]
     errors: list[PredictionError]
@@ -175,16 +180,22 @@ def extract_executions(path: Path) -> list[Execution]:
     return execs
 
 
-def sample_execs[T](execs: list[T]) -> list[T]:
-    """Stratified sample: evenly spaced indices across the session."""
-    n = len(execs)
-    if n <= PER_SESSION:
-        return list(execs)
-    indices = sorted({round(i * (n - 1) / (PER_SESSION - 1)) for i in range(PER_SESSION)})
-    return [execs[i] for i in indices]
+@dataclass(frozen=True)
+class SampleTranscript:
+    """One sample session with its classified transcript."""
+
+    sample: SampleFile
+    transcript: Transcript
+
+
+def _sample_phases(store: Path = STORE) -> list[SampleTranscript]:
+    """The sample sessions with their classified transcripts."""
+    return [SampleTranscript(sample, Transcript.from_session_file(sample.path)) for sample in find_files(store)]
 
 
 def load_ground_truth() -> dict[str, int]:
+    """phase_id -> the human's label. Phase ids are run_ids — stable across
+    reads of the same frozen session."""
     return {k: int(v) for k, v in json.loads(GROUND_TRUTH_PATH.read_text(encoding="utf-8")).items()}
 
 
@@ -261,10 +272,10 @@ def session_openings(store: Path = STORE) -> list[Opening]:
 
 
 def _apply_verdicts(truth: dict[str, int], stores: Labels, store: Path = STORE) -> int:
-    """Run verdicts (the primary path): each verdict's phase applies to
-    every call in that run. Idempotent — re-applying changes nothing.
+    """Phase verdicts (keyed by run_id = phase_id) fold directly into the
+    phase-level ground truth. Idempotent — re-applying changes nothing.
     Without the session store there are no runs to adjudicate — a no-op,
-    so apply_labels works on the label stores alone."""
+    so apply_labels works on the verdict store alone."""
     if not store.exists():
         return 0
     applied = 0
@@ -272,63 +283,56 @@ def _apply_verdicts(truth: dict[str, int], stores: Labels, store: Path = STORE) 
         transcript = Transcript.from_session_file(sample.path)
         for run in transcript.runs():
             verdict = stores.latest_run_verdict(run.run_id)
-            if verdict is not None and verdict.phase in PHASE_NAMES:
-                for call_id in run.call_ids:
-                    if truth.get(call_id) != verdict.phase:
-                        truth[call_id] = verdict.phase
-                        applied += 1
-    return applied
-
-
-def _apply_label_corrections(truth: dict[str, int], stores: Labels) -> int:
-    """Per-call labels (legacy path): a disagreement with a corrected
-    phase updates that call."""
-    applied = 0
-    for call_id, label in stores.latest_labels_map().items():
-        if (
-            not label.agree
-            and label.phase is not None
-            and label.phase in PHASE_NAMES
-            and truth.get(call_id) != label.phase
-        ):
-            truth[call_id] = label.phase
-            applied += 1
+            if verdict is not None and verdict.phase in PHASE_NAMES and truth.get(run.run_id) != verdict.phase:
+                truth[run.run_id] = verdict.phase
+                applied += 1
     return applied
 
 
 def apply_labels(labels_path: Path | None = None, ground_truth_path: Path | None = None, store: Path = STORE) -> int:
-    """Fold user adjudication into the ground truth.
+    """Fold phase verdicts into the ground truth: each verdict's phase
+    applies to that phase (verdicts are keyed by run_id = phase_id).
 
-    Reads the append-only stores (latest non-deleted records). Idempotent —
-    re-running changes nothing.
+    Reads the append-only verdict store (latest non-deleted records).
+    Idempotent — re-running changes nothing.
     """
     labels_path = labels_path or (HERE / "s1_labels.jsonl")
     ground_truth_path = ground_truth_path or GROUND_TRUTH_PATH
     truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
     stores = Labels(labels_path)
-    applied = _apply_verdicts(truth, stores, store) + _apply_label_corrections(truth, stores)
+    applied = _apply_verdicts(truth, stores, store)
     ground_truth_path.write_text(json.dumps(truth) + "\n", encoding="utf-8")
     print(f"applied {applied} corrections to ground truth")
     return 0
 
 
+def _dump_row(sample: SampleFile, run: Run, transcript: Transcript) -> DumpRow:
+    """One phase as a dump record: the run plus the calls that produced it
+    (the exact executions the classification used)."""
+    span = transcript.items[run.start : run.end + 1]
+    by_call = {e.call_id: e for e in transcript._execs}
+    calls = tuple(by_call[it.call_id] for it in span if it.kind == "tool_call" and it.call_id in by_call)
+    return DumpRow(
+        label=sample.label,
+        session=sample.path.name,
+        phase_id=run.run_id,
+        start=run.start,
+        end=run.end,
+        user=run.first_intent,
+        pred_phase=run.phase,
+        confidence=run.confidence,
+        calls=calls,
+    )
+
+
 def dump(store: Path = STORE) -> None:
+    """Regenerate the committed phase dump from the sample sessions."""
     rows: list[DumpRow] = []
-    for sample in find_files(store):
-        for ex in sample_execs(extract_executions(sample.path)):
-            rows.append(
-                DumpRow(
-                    label=sample.label,
-                    session=sample.path.name,
-                    call_id=ex.call_id,
-                    tool=ex.tool,
-                    intent=ex.intent,
-                    args=ex.args,
-                    prev_user=ex.prev_user,
-                )
-            )
+    for st in _sample_phases(store):
+        for run in st.transcript.runs():
+            rows.append(_dump_row(st.sample, run, st.transcript))
     DUMP_PATH.write_text("\n".join(json.dumps(asdict(r), default=str) for r in rows) + "\n", encoding="utf-8")
-    print(f"wrote {len(rows)} executions to {DUMP_PATH}")
+    print(f"wrote {len(rows)} phases to {DUMP_PATH}")
 
 
 def dump_rows() -> list[DumpRow]:
@@ -339,48 +343,52 @@ def dump_rows() -> list[DumpRow]:
         if not line.strip():
             continue
         try:
-            rows.append(DumpRow(**json.loads(line)))
-        except json.JSONDecodeError, TypeError:
+            o = json.loads(line)
+            rows.append(
+                DumpRow(
+                    label=o["label"],
+                    session=o["session"],
+                    phase_id=o["phase_id"],
+                    start=o["start"],
+                    end=o["end"],
+                    user=o.get("user", ""),
+                    pred_phase=o["pred_phase"],
+                    confidence=o["confidence"],
+                    calls=tuple(Execution(**c) for c in o["calls"]),
+                )
+            )
+        except json.JSONDecodeError, KeyError, TypeError:
             continue
     return rows
 
 
 def _evaluate_samples(ground_truth: dict[str, int], store: Path = STORE) -> Evaluation:
-    """Run the classifier over the sampled executions and tally agreement.
-    Delegation events are counted separately — they are not phase-bearing."""
+    """Classify the sample phases and tally agreement with the human's
+    labels. Every phase is adjudicable — it is the unit the human judges."""
     correct = 0
     total = 0
-    delegation_n = 0
     by_phase: dict[int, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
     confusion: dict[tuple[int, int], int] = defaultdict(int)
     errors: list[PredictionError] = []
-    for sample in find_files(store):
-        execs = sample_execs(extract_executions(sample.path))
-        for ex, classified in zip(execs, classify_with_context(execs), strict=True):
-            truth = ground_truth.get(ex.call_id)
+    for st in _sample_phases(store):
+        for run in st.transcript.runs():
+            truth = ground_truth.get(run.run_id)
             if truth is None:
                 continue
-            pred = classified.prediction
-            if classified.delegation:
-                delegation_n += 1
-                continue  # not phase-bearing; reported separately
             total += 1
-            confusion[(truth, pred.phase_id)] += 1
-            if pred.phase_id == truth:
+            confusion[(truth, run.phase)] += 1
+            if run.phase == truth:
                 correct += 1
                 by_phase[truth]["tp"] += 1
             else:
                 by_phase[truth]["fn"] += 1
-                by_phase[pred.phase_id]["fp"] += 1
+                by_phase[run.phase]["fp"] += 1
                 errors.append(
-                    PredictionError(
-                        tool=ex.tool, intent=ex.intent, truth=truth, pred=pred.phase_id, confidence=pred.confidence
-                    )
+                    PredictionError(user=run.first_intent, truth=truth, pred=run.phase, confidence=run.confidence)
                 )
     return Evaluation(
         correct=correct,
         total=total,
-        delegation_n=delegation_n,
         by_phase=dict(by_phase),
         confusion=dict(confusion),
         errors=errors,
@@ -399,7 +407,7 @@ def _print_confusion(ev: Evaluation) -> None:
 
 def _print_evaluation(ev: Evaluation, show_errors: bool) -> None:
     accuracy = f"{ev.correct}/{ev.total} = {ev.correct / ev.total:.2%}"
-    print(f"accuracy: {accuracy} (delegation events excluded: {ev.delegation_n})")
+    print(f"phase accuracy: {accuracy} (of {ev.total} labeled phases)")
     print(f"{'phase':<12}{'prec':>7}{'recall':>8}{'n':>5}")
     for phase in sorted(ev.by_phase):
         counts = ev.by_phase[phase]
@@ -408,20 +416,20 @@ def _print_evaluation(ev: Evaluation, show_errors: bool) -> None:
         print(f"{PHASE_NAMES[phase]:<12}{prec:>7.2%}{rec:>8.2%}{counts['tp'] + counts['fn']:>5}")
     _print_confusion(ev)
     if show_errors and ev.errors:
-        print("\nerrors (tool | intent | truth → pred | conf):")
+        print("\nerrors (phase opening | truth → pred | conf):")
         for err in sorted(ev.errors, key=lambda e: e.confidence)[:60]:
-            line = f"  {err.tool:<10} {err.intent[:45]:<45} {PHASE_NAMES[err.truth]} → {PHASE_NAMES[err.pred]}"
+            line = f"  {err.user[:40]:<40} {PHASE_NAMES[err.truth]} → {PHASE_NAMES[err.pred]}"
             print(f"{line} {err.confidence:.2f}")
 
 
 def evaluate(show_errors: bool, store: Path = STORE) -> int:
     ground_truth = load_ground_truth()
     if not ground_truth:
-        print("ground truth is empty — run --dump, label, re-run.")
+        print("ground truth is empty — label the phases via the confirm list, then re-run.")
         return 1
     ev = _evaluate_samples(ground_truth, store)
     if ev.total == 0:
-        print("no sampled executions matched the ground truth — stale ground truth for this dump?")
+        print("no phases matched the ground truth — stale ground truth for these sessions?")
         return 1
     _print_evaluation(ev, show_errors)
     return 0
@@ -433,70 +441,67 @@ _SHORT = {1: "prd", 2: "tech", 3: "flow", 4: "brk", 5: "plan", 6: "exec", 7: "pr
 
 
 def _report_rows(store: Path = STORE) -> list[ReportRow]:
-    """One ReportRow per ground-truthed sampled execution, session-tagged."""
+    """One ReportRow per phase of the sample sessions, session-tagged,
+    with the human's label where one exists."""
     ground_truth = load_ground_truth()
     tags = {o.label: f"S{i + 1}" for i, o in enumerate(session_openings(store))}
     rows: list[ReportRow] = []
-    for sample in find_files(store):
-        execs = sample_execs(extract_executions(sample.path))
-        for ex, classified in zip(execs, classify_with_context(execs), strict=True):
-            truth = ground_truth.get(ex.call_id)
-            if truth is None:
-                continue
-            pred = classified.prediction
+    for st in _sample_phases(store):
+        for run in st.transcript.runs():
             rows.append(
                 ReportRow(
-                    tool=ex.tool,
-                    intent=ex.intent,
-                    truth=truth,
-                    pred=pred.phase_id,
-                    confidence=pred.confidence,
-                    delegation=classified.delegation,
-                    tag=tags[sample.label],
+                    user=run.first_intent,
+                    truth=ground_truth.get(run.run_id),
+                    pred=run.phase,
+                    confidence=run.confidence,
+                    tools=len(run.call_ids),
+                    tag=tags[st.sample.label],
                 )
             )
     return rows
 
 
 def _group_rows(rows: list[ReportRow]) -> RowGroups:
-    disagreements = sorted([r for r in rows if not r.delegation and r.truth != r.pred], key=lambda r: r.confidence)
+    unlabeled = [r for r in rows if r.truth is None]
+    labeled = [r for r in rows if r.truth is not None]
+    disagreements = sorted([r for r in labeled if r.truth != r.pred], key=lambda r: r.confidence)
     low_conf_agreed = sorted(
-        [r for r in rows if not r.delegation and r.truth == r.pred and r.confidence < 0.5], key=lambda r: r.confidence
+        [r for r in labeled if r.truth == r.pred and r.confidence < 0.5], key=lambda r: r.confidence
     )[:40]
-    delegations = sorted([r for r in rows if r.delegation], key=lambda r: r.confidence)
     return RowGroups(
+        unlabeled=unlabeled,
         disagreements=disagreements,
         low_conf_agreed=low_conf_agreed,
-        delegations=delegations,
     )
 
 
 def _render_line(n: int, row: ReportRow) -> str:
-    arrow = "=" if row.truth == row.pred else "≠"
-    intent_txt = (row.intent or "").replace("|", "/")[:18]
-    return (
-        f"{n:3d}. [{row.tag}] {_SHORT[row.truth]}{arrow}{_SHORT[row.pred]} "
-        f'{row.tool[:7]:<7} {row.confidence:.2f} "{intent_txt}"'
-    )
+    """Phone-width confirmation line: [session] truth = guess, confidence,
+    tool count, the human's opening words."""
+    arrow = "→" if row.truth is None else ("=" if row.truth == row.pred else "≠")
+    truth = _SHORT[row.truth] if row.truth is not None else "??"
+    user_txt = (row.user or "").replace("|", "/")[:24]
+    return f'{n:3d}. [{row.tag}] {truth}{arrow}{_SHORT[row.pred]} {row.confidence:.2f} {row.tools}t "{user_txt}"'
 
 
 def confirm(output_path: Path | None = None, store: Path = STORE) -> int:
     """Write the phone-first confirmation list (default: analysis/findings/s1-confirm.md).
 
-    One sample per line, numbered so corrections can be replied as "12, 34
-    wrong"; disagreements first (lowest confidence first), then agreed
-    low-confidence predictions. Lines are width-constrained for a phone.
-    output_path lets tests regenerate elsewhere and diff against the
-    committed artifact instead of rewriting it.
+    One phase per line, numbered so corrections can be replied as "12, 34
+    wrong"; unlabeled phases first (the primary ask), then disagreements
+    (lowest confidence first), then agreed low-confidence predictions.
+    Lines are width-constrained for a phone. output_path lets tests
+    regenerate elsewhere and diff against the committed artifact instead
+    of rewriting it.
     """
     rows = _report_rows(store)
     groups = _group_rows(rows)
     openings = session_openings(store)
     tags = {o.label: f"S{i + 1}" for i, o in enumerate(openings)}
     out = [
-        "# S1 confirmation — reply with the numbers of any WRONG labels (e.g. '12 34').",
-        "# Lines: [session] my label = classifier label, confidence, tool, intent.",
-        "# Delegation events (subtask coordination) inherit the parent phase.",
+        "# S1 confirmation — reply with the numbers of any WRONG or UNLABELLED phases (e.g. '12 34').",
+        "# Lines: [session] truth = guess, confidence, tool calls, your opening words.",
+        "# A phase is one span of your work: from one of your messages to the next.",
         "",
         "## Sessions — repo · title · opening · first-20 tools",
     ]
@@ -504,19 +509,19 @@ def confirm(output_path: Path | None = None, store: Path = STORE) -> int:
         out.append(f"  {tags[o.label]:<3} {o.repo:<7} {o.label[:38]}")
         out.append(f"      open: {o.user[:43]}")
         out.append(f"      tools: {o.hist}")
+    out += ["", f"## Unlabeled ({len(groups.unlabeled)}) — label these"]
+    out += [_render_line(i, r) for i, r in enumerate(groups.unlabeled, 1)]
     out += ["", f"## Disagreements ({len(groups.disagreements)}) — adjudicate these"]
-    out += [_render_line(i, r) for i, r in enumerate(groups.disagreements, 1)]
+    out += [_render_line(i, r) for i, r in enumerate(groups.disagreements, len(groups.unlabeled) + 1)]
     out += ["", f"## Agreed but low confidence ({len(groups.low_conf_agreed)}) — spot check"]
-    out += [_render_line(i, r) for i, r in enumerate(groups.low_conf_agreed, len(groups.disagreements) + 1)]
-    out += ["", f"## Delegation ({len(groups.delegations)}) — subtask coordination, context-inherited"]
     out += [
         _render_line(i, r)
-        for i, r in enumerate(groups.delegations, len(groups.disagreements) + len(groups.low_conf_agreed) + 1)
+        for i, r in enumerate(groups.low_conf_agreed, len(groups.unlabeled) + len(groups.disagreements) + 1)
     ]
     path = output_path or (Path(__file__).resolve().parents[2] / "analysis" / "findings" / "s1-confirm.md")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
-    print(f"wrote {len(groups.disagreements)} disagreements + {len(groups.low_conf_agreed)} low-confidence to {path}")
+    print(f"wrote {len(groups.unlabeled)} unlabeled + {len(groups.disagreements)} disagreements to {path}")
     return 0
 
 

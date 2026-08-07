@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sdl_flow_optimiser.findings.labels import Label
 from sdl_flow_optimiser.phase_attribution import Execution, classify_with_context
 
 # Harness-injected preamble: the opening "user" message in some sessions is
@@ -43,8 +42,6 @@ class TranscriptItem:
     pred_phase: int | None = None
     confidence: float = 0.0
     delegation: bool = False
-    analyst_phase: int | None = None
-    label: Label | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +88,7 @@ class Transcript:
     def __init__(self, session_id: str, items: list[TranscriptItem]) -> None:
         self.session_id = session_id
         self.items = items
+        self._execs: list[Execution] = []  # the executions _classify used (dump fidelity)
 
     @classmethod
     def from_session_file(cls, path: Path) -> Transcript:
@@ -178,6 +176,7 @@ class Transcript:
             for it in tool_calls
         ]
         classified = classify_with_context(execs)
+        self._execs = execs  # the exact executions the classification used
         by_call = {e.call_id: c for e, c in zip(execs, classified, strict=True)}
         for it in tool_calls:
             result = by_call[it.call_id]
@@ -185,13 +184,6 @@ class Transcript:
             it.pred_phase = result.prediction.phase_id
             it.confidence = round(result.prediction.confidence, 2)
             it.delegation = result.delegation
-
-    def annotate(self, ground_truth: dict[str, int], labels: dict[str, Label]) -> None:
-        """Attach the analyst's label and the user's adjudication to tool calls."""
-        for it in self.items:
-            if it.kind == "tool_call":
-                it.analyst_phase = ground_truth.get(it.call_id)
-                it.label = labels.get(it.call_id)
 
     def runs(self) -> list[Run]:
         """Human-centric phases: the unit the user judges is the span of the
@@ -217,7 +209,26 @@ class Transcript:
             current.append(it)
         if current and any(c.kind == "tool_call" for c in current):
             phases.append(self._finish_run(current, current_start))
-        return self._merge_same_phase(phases)
+        merged = self._merge_same_phase(phases)
+        # ids are the phase's position in the FINAL sequence — stable and
+        # reproducible from the dump (pre-merge ordinals would leave gaps
+        # where phases merged away)
+        return self._renumber(merged, self.session_id)
+
+    @staticmethod
+    def _renumber(phases: list[Run], session_id: str) -> list[Run]:
+        return [
+            Run(
+                run_id=f"{session_id}#{i}",
+                phase=r.phase,
+                confidence=r.confidence,
+                start=r.start,
+                end=r.end,
+                call_ids=r.call_ids,
+                first_intent=r.first_intent,
+            )
+            for i, r in enumerate(phases, 1)
+        ]
 
     @staticmethod
     def _merge_same_phase(phases: list[Run]) -> list[Run]:
@@ -266,12 +277,13 @@ class Transcript:
     def _finish_run(self, items: list[TranscriptItem], start: int) -> Run:
         """One phase: the span's dominant phase among its non-delegation
         tool calls (the evidence of the work the human directed), the user's
-        opening message as the phase's intent."""
+        opening message as the phase's intent. run_id is assigned after
+        merging (runs())."""
         calls = [it for it in items if it.kind == "tool_call" and it.pred_phase is not None]
         vote = self._majority_phase(calls)
         end = start + len(items) - 1
         return Run(
-            run_id=f"{self.session_id}#{start}-{end}",
+            run_id="",
             phase=vote.phase_id,
             confidence=vote.confidence,
             start=start,

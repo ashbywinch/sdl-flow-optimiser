@@ -1,14 +1,16 @@
-"""Labeler: persistence, sample selection, and API contract.
+"""Labeler: persistence, phase selection, and API contract.
 
-Sample selection reads committed evidence files (no session store needed);
-the context endpoint needs the store and is store-guarded.
+Phase selection reads committed evidence files (no session store needed);
+the context endpoint needs the store and is store-faked via the fake_store
+fixture (tests must run identically everywhere — see testing-standards).
 """
 
 import json
+from urllib.parse import quote
 
 from fastapi.testclient import TestClient
 
-from sdl_flow_optimiser.findings.labels import Label, Labels
+from sdl_flow_optimiser.findings.labels import Labels
 from sdl_flow_optimiser.findings.transcript import Transcript
 from sdl_flow_optimiser.labeler.app import _repo_display_name, create_app
 from sdl_flow_optimiser.labeler.samples import build_samples, sample_counts, select_samples
@@ -67,6 +69,53 @@ def test_transcript_keeps_long_user_pastes_after_opening(tmp_path):
     assert sum(1 for it in items if it.kind == "user") == 2
 
 
+def test_transcript_phases_are_user_delimited_and_merged(tmp_path):
+    """A phase runs from one user message to the next — agent replies and
+    tool results never split it; adjacent same-phase spans merge."""
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "fix it"}]}}
+                ),
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": "on it"},
+                                {"type": "toolCall", "id": "c1", "name": "edit", "arguments": {}},
+                            ],
+                        },
+                    }
+                ),
+                json.dumps({"type": "message", "message": {"role": "toolResult", "toolCallId": "c1"}}),
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": "done"},
+                                {"type": "toolCall", "id": "c2", "name": "edit", "arguments": {}},
+                            ],
+                        },
+                    }
+                ),
+                json.dumps({"type": "message", "message": {"role": "toolResult", "toolCallId": "c2"}}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runs = Transcript.from_session_file(f).runs()
+    # one user message, one phase — the assistant's replies did not split it
+    assert len(runs) == 1
+    assert runs[0].call_ids == ("c1", "c2")
+
+
 def test_repo_display_name():
     assert (
         _repo_display_name("home-houses-1152d36eb194fb21914281c38f50d4caa2ef82b1728d228aaab672c3fb43cd5a") == "houses"
@@ -78,22 +127,6 @@ def test_repo_display_name():
     )
     assert _repo_display_name("-.paseo-worktrees-1qx6axnz-grand-buffalo") == "worktree: grand-buffalo"
     assert _repo_display_name("tmp-tmp-e9671acd244849c57167c658fa2f969752048f7ab184a3dcf5c46cb4d56ae124") == "tmp"
-
-
-def test_label_round_trip_is_append_only(tmp_path):
-    path = tmp_path / "labels.jsonl"
-    stores = Labels(labels_path=path)
-    assert stores.add_label("c1", True, None, "looks right").agree is True
-    latest = stores.add_label("c1", False, 3, "actually flow")
-    assert latest.phase == 3
-    assert stores.latest_label("c1") == Label("c1", False, 3, "actually flow", latest.updated_at_ms)
-    # history is preserved, not overwritten
-    history = stores.label_history("c1")
-    assert [h.comment for h in history] == ["looks right", "actually flow"]
-    # tombstone: remove hides, history survives
-    stores.remove_label("c1")
-    assert stores.latest_label("c1") is None
-    assert len(stores.label_history("c1")) == 2
 
 
 def test_association_round_trip_is_sorted_and_removable(tmp_path):
@@ -108,43 +141,49 @@ def test_association_round_trip_is_sorted_and_removable(tmp_path):
     assert stores.associations() == []
 
 
+def test_run_verdict_round_trip_is_append_only(tmp_path):
+    path = tmp_path / "labels.jsonl"
+    stores = Labels(labels_path=path)
+    verdict = stores.add_run_verdict("sess#3", 6, "execute work")
+    assert stores.latest_run_verdict("sess#3") == verdict
+    stores.remove_run_verdict("sess#3")
+    assert stores.latest_run_verdict("sess#3") is None
+    assert len(stores.latest_run_verdicts()) == 0
+
+
 def test_build_samples_from_committed_evidence():
     samples = build_samples()
-    assert len(samples) == 240
-    assert sum(1 for s in samples if s["delegation"]) == 4
+    assert len(samples) == 48  # all phases of the four sample sessions
     assert all(s["pred_phase"] in range(1, 9) for s in samples)
-    assert all(s["truth_phase"] in range(1, 9) for s in samples)
+    assert all(s["truth_phase"] is None or s["truth_phase"] in range(1, 9) for s in samples)
+    assert sum(1 for s in samples if s["truth_phase"] is None) == 9  # the unlabeled phases
 
 
-def test_select_random_is_seeded_and_excludes_delegation():
+def test_select_random_is_seeded():
     a = select_samples("random", 10, seed=42)
     b = select_samples("random", 10, seed=42)
-    assert [s["call_id"] for s in a] == [s["call_id"] for s in b]
-    assert not any(s["delegation"] for s in a)
+    assert [s["phase_id"] for s in a] == [s["phase_id"] for s in b]
 
 
 def test_select_lowconf_filters_by_confidence():
     pool = select_samples("lowconf", 50, seed=1)
-    assert pool
     assert all(s["confidence"] < 0.5 for s in pool)
 
 
 def test_select_disagreements_matches_truth_and_pred():
     pool = select_samples("disagreements", 50, seed=1)
     assert pool
-    assert all(s["truth_phase"] != s["pred_phase"] for s in pool)
+    assert all(s["truth_phase"] is not None and s["truth_phase"] != s["pred_phase"] for s in pool)
 
 
 def test_sample_counts_are_consistent():
     samples = build_samples()
-    adjudicable = [s for s in samples if not s["delegation"]]
-    lowconf = [s for s in adjudicable if s["confidence"] < 0.5]
-    disagreements = [s for s in adjudicable if s["truth_phase"] != s["pred_phase"]]
     counts = sample_counts()
-    assert counts.total == len(adjudicable)
-    assert counts.lowconf == len(lowconf)
-    assert counts.disagreements == len(disagreements)
-    assert counts.labeled == sum(1 for s in samples if s["label"])
+    assert counts.total == len(samples)
+    assert counts.labeled == sum(1 for s in samples if s["truth_phase"] is not None)
+    assert counts.disagreements == sum(
+        1 for s in samples if s["truth_phase"] is not None and s["truth_phase"] != s["pred_phase"]
+    )
 
 
 def _client(tmp_path, store_path=None):
@@ -159,23 +198,10 @@ def test_api_serves_index_and_samples(tmp_path):
     assert client.get("/").status_code == 200
     assert client.get("/app.js").status_code == 200
     sets = client.get("/api/sample-sets").json()
-    assert sets["total"] == 236
+    assert sets["total"] == 48
     samples = client.get("/api/samples?kind=disagreements&n=3&seed=7").json()
     assert len(samples) == 3
     assert all(s["truth_phase"] != s["pred_phase"] for s in samples)
-
-
-def test_api_label_persists_and_validates(tmp_path):
-    client = _client(tmp_path)
-    sample = client.get("/api/samples?kind=disagreements&n=1&seed=1").json()[0]
-    res = client.post(
-        "/api/labels", json={"call_id": sample["call_id"], "agree": False, "phase": 3, "comment": "flow work"}
-    )
-    assert res.status_code == 200
-    saved = Labels(labels_path=tmp_path / "labels.jsonl").latest_labels_map()
-    assert saved[sample["call_id"]].phase == 3
-    bad = client.post("/api/labels", json={"call_id": "x", "agree": True, "phase": 99})
-    assert bad.status_code == 400
 
 
 def test_api_associations(tmp_path):
@@ -190,12 +216,29 @@ def test_api_associations(tmp_path):
     assert client.get("/api/associations").json() == []
 
 
-def test_api_context_shows_surrounding_events(tmp_path, fake_store):
+def test_api_verdicts_fold_into_ground_truth(tmp_path, fake_store):
+    from sdl_flow_optimiser.findings.attribution_feasibility import find_files
+
+    client = _client(tmp_path, fake_store)
+    first_session = find_files(fake_store)[0].path
+    phase_id = Transcript.from_session_file(first_session).runs()[0].run_id
+    encoded = quote(phase_id, safe="")  # run_ids carry a # — must be URL-encoded
+    res = client.post(f"/api/runs/{encoded}/verdict", json={"phase": 5, "comment": "planning"})
+    assert res.status_code == 200
+    verdict = Labels(labels_path=tmp_path / "labels.jsonl").latest_run_verdict(phase_id)
+    assert verdict is not None and verdict.phase == 5
+    assert client.delete(f"/api/runs/{encoded}/verdict").status_code == 200
+    assert Labels(labels_path=tmp_path / "labels.jsonl").latest_run_verdict(phase_id) is None
+
+
+def test_api_context_shows_a_phase(fake_store, tmp_path):
     client = _client(tmp_path, fake_store)
     sample = client.get("/api/samples?kind=random&n=1&seed=3").json()[0]
-    body = client.get(f"/api/samples/{sample['call_id']}/context").json()
-    assert len(body["events"]) >= 3
-    assert any(e["this_sample"] for e in body["events"])
+    body = client.get(f"/api/samples/{quote(sample['phase_id'], safe='')}/context").json()
+    assert body["user"]  # the human's opening words
+    assert body["pred_phase"] == sample["pred_phase"]
+    assert len(body["events"]) == sample["tools"]  # the phase's calls
+    assert client.get("/api/samples/not-a-real-phase/context").status_code == 404
 
 
 def test_samples_carry_session_id():
@@ -203,17 +246,7 @@ def test_samples_carry_session_id():
     assert sample["session_id"].endswith(".jsonl")
 
 
-def test_api_label_delete_undoes(tmp_path):
-    client = _client(tmp_path)
-    sample = client.get("/api/samples?kind=random&n=1&seed=2").json()[0]
-    client.post("/api/labels", json={"call_id": sample["call_id"], "agree": False, "phase": 3})
-    assert sample["call_id"] in Labels(labels_path=tmp_path / "labels.jsonl").latest_labels_map()
-    res = client.delete(f"/api/labels/{sample['call_id']}")
-    assert res.status_code == 200
-    assert sample["call_id"] not in Labels(labels_path=tmp_path / "labels.jsonl").latest_labels_map()
-
-
-def test_api_rejects_path_traversal_session_id(tmp_path, fake_store):
+def test_api_rejects_path_traversal_session_id(fake_store, tmp_path):
     """A crafted session_id must not read files outside the store — the
     labeler is LAN-reachable with no auth (PRD trust decision), so the
     containment check is the boundary."""
@@ -222,7 +255,7 @@ def test_api_rejects_path_traversal_session_id(tmp_path, fake_store):
         assert client.get(f"/api/sessions/{evil}").status_code == 404
 
 
-def test_api_session_detail_returns_readable_transcript(tmp_path, fake_store):
+def test_api_session_detail_returns_readable_transcript(fake_store, tmp_path):
     client = _client(tmp_path, fake_store)
     sample = client.get("/api/samples?kind=random&n=1&seed=4").json()[0]
     body = client.get(f"/api/sessions/{sample['session_id']}").json()
@@ -231,7 +264,5 @@ def test_api_session_detail_returns_readable_transcript(tmp_path, fake_store):
     assert "assistant" in kinds  # the agent's replies too
     assert "tool_call" in kinds
     assert body["tool_calls"] >= 60  # full session, not a window
-    tool = next(it for it in body["transcript"] if it["kind"] == "tool_call")
-    assert "pred_phase" in tool and "analyst_phase" in tool
-    assert any(it["call_id"] == sample["call_id"] for it in body["transcript"] if it["kind"] == "tool_call")
+    assert body["runs"] and body["runs"][0]["first_intent"]  # phases carry the human's words
     assert client.get("/api/sessions/not-a-real-session.jsonl").status_code == 404

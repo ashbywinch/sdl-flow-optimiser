@@ -1,61 +1,45 @@
-"""Finding S1 data integrity: ground truth matches the dump, values are valid.
+"""Finding S1 data integrity: the phase dump and ground truth agree, values
+are valid.
 
-Guards the committed evidence: if the dump or ground truth drift (regenerated
-against a different sample, hand-edited, corrupted), the S1 finding's numbers
-become unreproducible — this test fails instead.
+Guards the committed evidence: if the dump or ground truth drift
+(regenerated against a different segmentation, hand-edited, corrupted), the
+S1 finding's numbers become unreproducible — this test fails instead.
 """
 
 import json
 from pathlib import Path
 
-from sdl_flow_optimiser.findings.attribution_feasibility import (
-    PER_SESSION,
-    apply_labels,
-    confirm,
-    sample_execs,
-    session_openings,
-)
-from sdl_flow_optimiser.phase_attribution import classify_with_context
+from sdl_flow_optimiser.findings.attribution_feasibility import apply_labels, confirm, dump_rows, session_openings
+from sdl_flow_optimiser.findings.labels import Labels
+from sdl_flow_optimiser.findings.transcript import Transcript
 
 HERE = Path(__file__).resolve().parent.parent / "sdl_flow_optimiser" / "findings"
 
 
 def _load():
-    dump = [json.loads(line) for line in (HERE / "s1_dump.jsonl").read_text(encoding="utf-8").splitlines()]
+    dump = dump_rows()
     truth = json.loads((HERE / "s1_ground_truth.json").read_text(encoding="utf-8"))
     return dump, truth
 
 
-def test_dump_has_four_sessions_of_per_session_samples():
+def test_dump_has_phases_from_all_four_sessions():
     dump, _ = _load()
-    sessions = {row["session"] for row in dump}
+    sessions = {row.session for row in dump}
     assert len(sessions) == 4
-    assert len(dump) == 4 * PER_SESSION
+    assert all(row.calls for row in dump)  # every phase carries the evidence that produced it
+    assert all(row.user for row in dump)  # every phase is anchored to the human's words
 
 
-def test_ground_truth_keys_match_dump_call_ids_exactly():
+def test_ground_truth_keys_are_real_phase_ids():
+    """Every ground-truth key is a phase in the dump; the unlabeled phases
+    (no seed yet) are simply absent — the confirm flow labels them."""
     dump, truth = _load()
-    assert set(truth) == {row["call_id"] for row in dump}
+    assert set(truth) <= {row.phase_id for row in dump}
 
 
 def test_ground_truth_values_are_valid_phases():
     _, truth = _load()
     assert set(truth.values()) <= set(range(1, 9))
-
-
-def test_stratified_sample_is_deterministic_and_covers_ends():
-    fake = [{"call_id": f"c{i}"} for i in range(1000)]
-    first = sample_execs(fake)
-    second = sample_execs(fake)
-    assert [e["call_id"] for e in first] == [e["call_id"] for e in second]
-    assert first[0]["call_id"] == "c0"  # start of session always sampled
-    assert first[-1]["call_id"] == "c999"  # end always sampled
-    assert len(first) == PER_SESSION
-
-
-def test_sample_caps_at_per_session_for_small_sessions():
-    small = [{"call_id": f"c{i}"} for i in range(10)]
-    assert len(sample_execs(small)) == 10
 
 
 def test_confirm_lines_fit_a_phone_screen():
@@ -75,21 +59,21 @@ def test_confirm_lines_fit_a_phone_screen():
 def test_confirm_is_numbered_and_replyable():
     path = HERE.parent.parent / "analysis" / "findings" / "s1-confirm.md"
     numbered = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()[:1].isdigit()]
-    assert numbered, "confirm list has no numbered samples"
+    assert numbered, "confirm list has no numbered phases"
     assert numbered[0].startswith("  1."), "numbering must start at 1 so corrections can reference it"
 
 
 def test_confirm_output_matches_committed(fake_store, tmp_path):
     """Regenerating the confirmation list over the fake store must exactly
-    reproduce the committed artifact's rows — the sampled executions the
-    fake encodes ARE the committed dump, so the adjudication rows are
-    byte-identical (derived data is regenerated, never hand-edited)."""
+    reproduce the committed artifact's rows — the phases the fake encodes
+    ARE the committed dump, so the adjudication rows are byte-identical
+    (derived data is regenerated, never hand-edited)."""
     out = tmp_path / "confirm.md"
     assert confirm(out, store=fake_store) == 0
     committed = HERE.parent.parent / "analysis" / "findings" / "s1-confirm.md"
 
     def rows_section(text: str) -> str:
-        return text[text.index("## Disagreements") :]
+        return text[text.index("## Unlabeled") :]
 
     assert rows_section(out.read_text(encoding="utf-8")) == rows_section(committed.read_text(encoding="utf-8"))
 
@@ -115,30 +99,33 @@ def test_session_openings_are_recognizable(fake_store):
         assert o.hist, f"{o.label} has no tool mix"
 
 
-def test_apply_labels_folds_disagreements_into_ground_truth(tmp_path):
-    from sdl_flow_optimiser.findings.labels import Labels
+def test_apply_labels_folds_verdicts_into_ground_truth(tmp_path, fake_store):
+    """A phase verdict folds into the ground truth; re-running is
+    idempotent; an agreement (same phase) changes nothing."""
+    from sdl_flow_optimiser.findings.attribution_feasibility import find_files
 
+    first_session = find_files(fake_store)[0].path
+    runs = Transcript.from_session_file(first_session).runs()
+    assert runs
+    phase_id = runs[0].run_id
     gt_path = tmp_path / "gt.json"
     labels_path = tmp_path / "labels.jsonl"
-    gt_path.write_text(json.dumps({"a": 6, "b": 6}) + "\n", encoding="utf-8")
+    gt_path.write_text(json.dumps({"other": 6}) + "\n", encoding="utf-8")
     stores = Labels(labels_path=labels_path)
-    stores.add_label("a", True, None, "")  # agreement: no change
-    stores.add_label("b", False, 1, "research")  # correction
-    stores.add_label("c", False, None, "unresolved")  # no phase: no change
-    apply_labels(labels_path, gt_path)
+    stores.add_run_verdict(phase_id, 3, "flow work")
+    apply_labels(labels_path, gt_path, store=fake_store)
     truth = json.loads(gt_path.read_text(encoding="utf-8"))
-    assert truth["a"] == 6
-    assert truth["b"] == 1
-    assert "c" not in truth  # comment-only disagreement adds nothing
+    assert truth["other"] == 6  # untouched phases survive
+    assert truth[phase_id] == 3
     # idempotent
-    apply_labels(labels_path, gt_path)
-    assert json.loads(gt_path.read_text(encoding="utf-8"))["b"] == 1
+    apply_labels(labels_path, gt_path, store=fake_store)
+    assert json.loads(gt_path.read_text(encoding="utf-8"))[phase_id] == 3
 
 
 def test_delegation_inherits_parent_phase():
     """A task spawn between execute events takes execute; a scout check in a
     prd research run takes prd — the event's own signature is irrelevant."""
-    from sdl_flow_optimiser.phase_attribution import Execution
+    from sdl_flow_optimiser.phase_attribution import Execution, classify_with_context
 
     def execs(*rows):
         return [Execution(call_id=r[3], tool=r[0], intent=r[1], args=r[2]) for r in rows]

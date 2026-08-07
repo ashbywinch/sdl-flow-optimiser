@@ -19,43 +19,42 @@ from typing import Any
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from sdl_flow_optimiser.findings.attribution_feasibility import STORE, dump_rows, extract_executions, load_ground_truth
+from sdl_flow_optimiser.findings.attribution_feasibility import STORE, dump_rows, extract_executions
 from sdl_flow_optimiser.findings.labels import (
     ASSOCIATIONS_PATH,
     LABELS_PATH,
     Association,
-    Label,
     Labels,
     RunVerdict,
 )
 from sdl_flow_optimiser.findings.transcript import Transcript, TranscriptItem
-from sdl_flow_optimiser.labeler.samples import Sample, SampleCounts, build_samples, sample_counts, select_samples
+from sdl_flow_optimiser.labeler.samples import Sample, SampleCounts, sample_counts, select_samples
 from sdl_flow_optimiser.phase_attribution import PHASE_NAMES, classify_with_context
 
 STATIC = Path(__file__).parent / "static"
-WINDOW = 5
 NO_CACHE = {"Cache-Control": "no-store"}
 
 
 @dataclass
 class ContextEvent:
-    """One execution in the context window around a sample."""
+    """One call inside a phase, with its per-call prediction."""
 
     tool: str
     intent: str
     phase: int
     confidence: float
-    this_sample: bool
 
 
 @dataclass
 class ContextResponse:
-    """The events surrounding one sample, with paging flags."""
+    """One phase as the API reports it: the human's opening words, the
+    phase prediction, and the calls that produced it."""
 
     session: str
+    user: str
+    pred_phase: int
+    confidence: float
     events: list[ContextEvent]
-    more_before: bool
-    more_after: bool
 
 
 @dataclass
@@ -135,56 +134,39 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.get("/api/samples/{call_id}/context")
-    def context(call_id: str, window: int = WINDOW, offset: int = 0) -> ContextResponse:
-        """Surrounding events around one sample in its own session transcript."""
-        rows = build_samples()
-        sample = next((s for s in rows if s["call_id"] == call_id), None)
-        if sample is None:
-            raise HTTPException(status_code=404, detail="unknown call_id")
-        session_file = next((r.session for r in dump_rows() if r.call_id == call_id), None)
-        if session_file is None:
-            raise HTTPException(status_code=404, detail="sample not in dump")
+    @app.get("/api/samples/{phase_id}/context")
+    def context(phase_id: str) -> ContextResponse:
+        """One phase: the human's opening words, the phase prediction, and
+        its calls with their per-call predictions."""
+        row = next((r for r in dump_rows() if r.phase_id == phase_id), None)
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown phase_id")
         path = next(
-            (d / session_file for d in store_path.iterdir() if d.is_dir() and (d / session_file).exists()),
+            (d / row.session for d in store_path.iterdir() if d.is_dir() and (d / row.session).exists()),
             None,
         )
         if path is None:
             raise HTTPException(status_code=404, detail="session file not on this machine")
         execs = extract_executions(path)
-        index = next((i for i, e in enumerate(execs) if e.call_id == call_id), None)
-        if index is None:
-            raise HTTPException(status_code=404, detail="call not in this session")
         preds = classify_with_context(execs)
-        lo = max(0, index - window - offset)
-        hi = min(len(execs), index + window + 1 + offset)
+        call_ids = {call.call_id for call in row.calls}
         events = [
             ContextEvent(
                 tool=e.tool,
                 intent=e.intent,
                 phase=classified.prediction.phase_id,
                 confidence=round(classified.prediction.confidence, 2),
-                this_sample=e.call_id == call_id,
             )
-            for e, classified in zip(execs[lo:hi], preds[lo:hi], strict=True)
+            for e, classified in zip(execs, preds, strict=True)
+            if e.call_id in call_ids
         ]
         return ContextResponse(
-            session=sample["session"],
+            session=row.session,
+            user=row.user,
+            pred_phase=row.pred_phase,
+            confidence=row.confidence,
             events=events,
-            more_before=lo > 0,
-            more_after=hi < len(execs),
         )
-
-    @app.post("/api/labels")
-    def label(
-        call_id: str = Body(...),
-        agree: bool = Body(...),
-        phase: int | None = Body(None),
-        comment: str = Body(""),
-    ) -> Label:
-        if phase is not None and phase not in PHASE_NAMES:
-            raise HTTPException(status_code=400, detail=f"phase must be one of {sorted(PHASE_NAMES)}")
-        return stores.add_label(call_id, agree, phase, comment)
 
     @app.get("/api/sessions")
     def sessions() -> list[SessionSummary]:
@@ -204,7 +186,6 @@ def create_app(
         if path is None or not path.resolve().is_relative_to(store_path.resolve()):
             raise HTTPException(status_code=404, detail="session not on this machine")
         transcript = Transcript.from_session_file(path)
-        transcript.annotate(load_ground_truth(), stores.latest_labels_map())
         runs = transcript.runs()
         verdicts = stores.latest_run_verdicts()
         run_details = [
@@ -226,12 +207,6 @@ def create_app(
             tool_calls=sum(1 for it in transcript.items if it.kind == "tool_call"),
             runs=run_details,
         )
-
-    @app.delete("/api/labels/{call_id}")
-    def delete_label_endpoint(call_id: str) -> dict[str, bool]:
-        """Undo an adjudication (append-only tombstone)."""
-        stores.remove_label(call_id)
-        return {"ok": True}
 
     @app.post("/api/runs/{run_id}/verdict")
     def run_verdict(run_id: str, phase: int = Body(...), comment: str = Body("")) -> RunVerdict:

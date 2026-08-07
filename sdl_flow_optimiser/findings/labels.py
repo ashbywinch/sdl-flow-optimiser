@@ -21,17 +21,6 @@ ASSOCIATIONS_PATH = HERE / "s1_associations.jsonl"
 
 
 @dataclass(frozen=True)
-class Label:
-    """One adjudication of one sample: agree, optional corrected phase, comment."""
-
-    call_id: str
-    agree: bool
-    phase: int | None
-    comment: str
-    updated_at_ms: int
-
-
-@dataclass(frozen=True)
 class Association:
     """A session pair that is one piece of work (order-independent)."""
 
@@ -57,16 +46,6 @@ class Labels:
     def __init__(self, labels_path: Path = LABELS_PATH, associations_path: Path = ASSOCIATIONS_PATH) -> None:
         self._labels_path = labels_path
         self._associations_path = associations_path
-
-    @staticmethod
-    def _label_from_line(line: dict[str, Any]) -> Label:
-        return Label(
-            call_id=str(line["call_id"]),
-            agree=bool(line["agree"]),
-            phase=int(line["phase"]) if line.get("phase") is not None else None,
-            comment=str(line.get("comment", "")),
-            updated_at_ms=int(line["updated_at_ms"]),
-        )
 
     @staticmethod
     def _association_from_line(line: dict[str, Any]) -> Association:
@@ -108,56 +87,6 @@ class Labels:
         """Append one serialized JSON line — the write boundary."""
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(payload + "\n")
-
-    # ---- labels ----
-
-    def add_label(self, call_id: str, agree: bool, phase: int | None, comment: str) -> Label:
-        label = Label(
-            call_id=call_id,
-            agree=agree,
-            phase=phase,
-            comment=comment,
-            updated_at_ms=int(time.time() * 1000),
-        )
-        self._append(self._labels_path, json.dumps({"kind": "label", **asdict(label)}, sort_keys=True))
-        return label
-
-    def remove_label(self, call_id: str) -> None:
-        """Soft delete: a tombstone supersedes the label's history."""
-        self._append(
-            self._labels_path,
-            json.dumps(
-                {"kind": "label", "call_id": call_id, "deleted": True, "updated_at_ms": int(time.time() * 1000)},
-                sort_keys=True,
-            ),
-        )
-
-    def latest_label(self, call_id: str) -> Label | None:
-        for line in reversed(self._read(self._labels_path)):
-            if line.get("kind") != "label" or line.get("call_id") != call_id:
-                continue
-            return None if line.get("deleted") else self._label_from_line(line)
-        return None
-
-    def latest_labels_map(self) -> dict[str, Label]:
-        """call_id -> newest non-deleted label (a tombstone removes)."""
-        result: dict[str, Label] = {}
-        for line in self._read(self._labels_path):
-            if line.get("kind") != "label":
-                continue
-            call_id = str(line["call_id"])
-            if line.get("deleted"):
-                result.pop(call_id, None)
-            else:
-                result[call_id] = self._label_from_line(line)
-        return result
-
-    def label_history(self, call_id: str) -> list[Label]:
-        return [
-            self._label_from_line(line)
-            for line in self._read(self._labels_path)
-            if line.get("kind") == "label" and line.get("call_id") == call_id and not line.get("deleted")
-        ]
 
     # ---- associations ----
 
