@@ -214,6 +214,13 @@ function renderSessions() {
       row.appendChild(title);
       row.appendChild(el("div", "s-meta", `${s.started_at.slice(0, 16)} · ${Object.entries(s.tools).map(([t, c]) => `${t}×${c}`).join(" ")}`));
       row.appendChild(el("div", "s-meta", s.opening || ""));
+      const rowbtns = el("div", "e-actions");
+      const open = el("button", "ok", "Open session →");
+      open.onclick = (ev) => {
+        ev.stopPropagation();
+        showSession(s.id);
+      };
+      rowbtns.appendChild(open);
       const pick = el("button", "pickbtn", state.selected.includes(s.id) ? "✓ selected" : "select for grouping");
       pick.onclick = (ev) => {
         ev.stopPropagation();
@@ -222,7 +229,8 @@ function renderSessions() {
         renderSessions();
         document.getElementById("associate").disabled = state.selected.length !== 2;
       };
-      row.appendChild(pick);
+      rowbtns.appendChild(pick);
+      row.appendChild(rowbtns);
       row.onclick = () => showSession(s.id);
       wrap.appendChild(row);
     }
@@ -264,51 +272,72 @@ async function showSession(id) {
   wrap.appendChild(head);
   wrap.appendChild(el("div", "s-title", meta.title || "(untitled)"));
   wrap.appendChild(el("div", "s-meta", `${meta.repo || ""} · ${(meta.opening || "").slice(0, 120)}`));
-  wrap.appendChild(el("div", "hint", `${detail.event_count} tool calls — tap a phase then Disagree to correct; session opens in full`));
-  for (const ev of detail.events) {
-    const row = el("div", "event");
-    const ehead = el("div", "e-head");
-    ehead.appendChild(el("span", "phase", `pred ${PHASE_UI[ev.pred_phase]} (${ev.confidence})`));
-    if (ev.analyst_phase) ehead.appendChild(el("span", "tag", `analyst: ${PHASE_UI[ev.analyst_phase]}`));
-    if (ev.delegation) ehead.appendChild(el("span", "tag", "delegation"));
-    row.appendChild(ehead);
-    row.appendChild(el("div", "intent", ev.intent || "(no intent)"));
-    if (ev.args) row.appendChild(el("div", "args", ev.args.slice(0, 160)));
-    if (ev.label) row.appendChild(el("div", "bar", `marked: ${ev.label.agree ? "agree" : "disagree"}${ev.label.phase ? " → " + PHASE_UI[ev.label.phase] : ""}`));
-    const actions = el("div", "e-actions");
-    const comment = el("input", "comment");
-    comment.placeholder = "comment (optional)";
-    const ok = el("button", "ok", "✓ Agree");
-    const bad = el("button", "bad", "✗ Disagree");
-    const submit = async (agree, phase) => {
-      await adjudicate(ev.call_id, ev.pred_phase, agree, phase, comment.value, () => {
-        showSession(id);
-      });
-    };
-    ok.onclick = () => submit(true, null);
-    bad.onclick = () => submit(false, state.picked);
-    actions.appendChild(ok);
-    actions.appendChild(bad);
-    row.appendChild(actions);
-    phasePills(row, null).className = "phasepick pickbtn";
-    row.appendChild(comment);
-    wrap.appendChild(row);
+  wrap.appendChild(el("div", "hint", `${detail.tool_calls} tool calls — tap a phase then Disagree to correct`));
+  for (const it of detail.transcript) {
+    if (it.kind === "user") {
+      const b = el("div", "bubble you", `You: ${it.text}`);
+      wrap.appendChild(b);
+    } else if (it.kind === "assistant") {
+      const b = el("div", "bubble agent", `Agent: ${it.text.slice(0, 220)}${it.text.length > 220 ? "…" : ""}`);
+      if (it.text.length > 220) {
+        b.style.cursor = "pointer";
+        b.onclick = () => { b.textContent = `Agent: ${it.text}`; };
+      }
+      wrap.appendChild(b);
+    } else if (it.kind === "tool_call") {
+      const row = el("div", "event");
+      const ehead = el("div", "e-head");
+      ehead.appendChild(el("span", "tag", it.tool));
+      ehead.appendChild(el("span", "phase", `pred: ${PHASE_UI[it.pred_phase]} (${it.confidence})`));
+      if (it.analyst_phase) ehead.appendChild(el("span", "tag", `analyst: ${PHASE_UI[it.analyst_phase]}`));
+      if (it.delegation) ehead.appendChild(el("span", "tag", "delegation"));
+      row.appendChild(ehead);
+      row.appendChild(el("div", "intent", it.intent || "(no intent)"));
+      if (it.args) row.appendChild(el("div", "args", it.args.slice(0, 160)));
+      if (it.label) row.appendChild(el("div", "bar", `marked: ${it.label.agree ? "agree" : "disagree"}${it.label.phase ? " → " + PHASE_UI[it.label.phase] : ""}`));
+      const actions = el("div", "e-actions");
+      const comment = el("input", "comment");
+      comment.placeholder = "comment (optional)";
+      const ok = el("button", "ok", "✓ Agree");
+      const bad = el("button", "bad", "✗ Disagree");
+      const submit = async (agree, phase) => {
+        await adjudicate(it.call_id, it.pred_phase, agree, phase, comment.value, () => {
+          showSession(id);
+        });
+      };
+      ok.onclick = () => submit(true, null);
+      bad.onclick = () => submit(false, state.picked);
+      actions.appendChild(ok);
+      actions.appendChild(bad);
+      row.appendChild(actions);
+      phasePills(row, null).className = "phasepick pickbtn";
+      row.appendChild(comment);
+      wrap.appendChild(row);
+    }
   }
 }
 
 // ---------- boot ----------
 
-document.getElementById("tab-label").onclick = () => {
-  document.getElementById("tab-label").classList.add("active");
-  document.getElementById("tab-sessions").classList.remove("active");
-  document.getElementById("pane-label").hidden = false;
-  document.getElementById("pane-sessions").hidden = true;
-};
+function activateTab(name) {
+  const labelTab = document.getElementById("tab-label");
+  const sessTab = document.getElementById("tab-sessions");
+  if (name === "sessions") {
+    sessTab.classList.add("active");
+    labelTab.classList.remove("active");
+    document.getElementById("pane-sessions").hidden = false;
+    document.getElementById("pane-label").hidden = true;
+  } else {
+    labelTab.classList.add("active");
+    sessTab.classList.remove("active");
+    document.getElementById("pane-label").hidden = false;
+    document.getElementById("pane-sessions").hidden = true;
+  }
+}
+
+document.getElementById("tab-label").onclick = () => activateTab("label");
 document.getElementById("tab-sessions").onclick = () => {
-  document.getElementById("tab-sessions").classList.add("active");
-  document.getElementById("tab-label").classList.remove("active");
-  document.getElementById("pane-sessions").hidden = false;
-  document.getElementById("pane-label").hidden = true;
+  activateTab("sessions");
   if (state.session) {
     showSession(state.session.id);
   } else if (state.sessionsList.length === 0) {
@@ -329,4 +358,5 @@ document.getElementById("associate").onclick = async () => {
 document.getElementById("load").onclick = loadSamples;
 
 refreshSets();
-loadSamples();
+loadSessions();
+activateTab("sessions");

@@ -59,20 +59,25 @@
   .summary li { font-size:14px; padding:3px 0; color:var(--dim); }
   .pickbtn { margin-top:6px; }
   .picked { outline:2px solid var(--acc); }
+  .bubble { border-radius:12px; padding:10px 12px; margin:6px 0; font-size:15px; }
+  .bubble.you { background:#1d3a5f; }
+  .bubble.agent { background:#26262a; color:#ddd; }
 </style>
 </head>
 <body>
 <header>
   <h1>S1 labeler</h1>
   <nav>
-    <button id="tab-label" class="active">Label</button>
-    <button id="tab-sessions">Sessions</button>
+    <button id="tab-sessions" class="active">Sessions</button>
+    <button id="tab-label">Samples</button>
   </nav>
 </header>
 <main>
   <section id="pane-label">
     <div class="bar" id="sets"></div>
-    <div class="hint">Is the predicted phase right? If not, tap the correct phase, then <b>Disagree</b>.</div>
+    <div class="hint"><b>Samples</b> are individual calls pulled out of your sessions for a quick
+      check — tap a sample's session name to open the full session. Prefer the
+      <b>Sessions</b> tab to read everything.</div>
     <div class="legend">Phases: PRD · Tech design · Flow design · Tickets · Plan · Execute · PR + review · UX loop<br>
       pred = model's guess · (0.9) = its confidence · analyst = my label · disagree = correct it</div>
     <div class="controls">
@@ -87,7 +92,7 @@
     <div id="queue"></div>
   </section>
   <section id="pane-sessions" hidden>
-    <div class="bar">Pick two sessions that are the same piece of work, then Associate.</div>
+    <div class="bar">Tap a session to open its full contents. Pick two sessions that are the same piece of work, then Associate.</div>
     <div id="sessions"></div>
     <div class="assoc">
       <button id="associate" disabled style="padding:10px 16px;border-radius:8px;border:none;background:var(--acc);color:#000;font-weight:600">Associate selected</button>

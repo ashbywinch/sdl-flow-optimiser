@@ -132,13 +132,16 @@ def test_api_label_delete_undoes(tmp_path):
 
 
 @pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
-def test_api_session_detail_shows_full_transcript(tmp_path):
+def test_api_session_detail_returns_readable_transcript(tmp_path):
     client = _client(tmp_path)
     sample = client.get("/api/samples?kind=random&n=1&seed=4").json()[0]
     body = client.get(f"/api/sessions/{sample['session_id']}").json()
-    assert body["event_count"] >= 60  # full session, not a window
-    assert body["events"][0]["call_id"]
-    assert "pred_phase" in body["events"][0]
-    assert "analyst_phase" in body["events"][0]
-    assert any(e["call_id"] == sample["call_id"] for e in body["events"])
+    kinds = [it["kind"] for it in body["transcript"]]
+    assert "user" in kinds  # your words are in the transcript
+    assert "assistant" in kinds  # the agent's replies too
+    assert "tool_call" in kinds
+    assert body["tool_calls"] >= 60  # full session, not a window
+    tool = next(it for it in body["transcript"] if it["kind"] == "tool_call")
+    assert "pred_phase" in tool and "analyst_phase" in tool
+    assert any(it["call_id"] == sample["call_id"] for it in body["transcript"] if it["kind"] == "tool_call")
     assert client.get("/api/sessions/not-a-real-session.jsonl").status_code == 404
