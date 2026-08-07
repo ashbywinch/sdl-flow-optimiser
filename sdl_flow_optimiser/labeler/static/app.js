@@ -260,8 +260,10 @@ function renderLabel() {
         renderLabel();
       },
       () => {
-        // undo: return to the sample that was just marked, don't advance again
+        // undo: return to the sample that was just marked, drop it from the
+        // batch summary (its label was deleted), don't advance again
         state.idx = Math.max(0, state.idx - 1);
+        state.batch.pop();
         state.picked = null;
         renderLabel();
       }

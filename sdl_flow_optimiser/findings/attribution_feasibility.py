@@ -1,7 +1,7 @@
 """Finding S1 — attribution feasibility: does phase attribution agree with hand labels?
 
 A repeatable experiment (the findings stage's core). Extracts a stratified
-sample of tool executions from 5 frozen sessions spanning the phase spectrum,
+sample of tool executions from 4 frozen sessions spanning the phase spectrum,
 attributes each with sdl_flow_optimiser.phase_attribution, and compares
 against hand labels in s1_ground_truth.json (analyst labels — Ashby to
 validate). Sessions in the sample MUST be frozen: a live transcript shifts
@@ -18,6 +18,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from sdl_flow_optimiser.findings.labels import Labels
 from sdl_flow_optimiser.phase_attribution import PHASE_NAMES, PhasePrediction, assign_phase, is_delegation
 
 STORE = Path.home() / ".omp" / "agent" / "sessions"
@@ -195,8 +196,6 @@ def apply_labels(labels_path: Path | None = None, ground_truth_path: Path | None
     disagreements keep it. Reads the append-only label store (latest
     non-deleted verdict per sample). Idempotent — re-running changes
     nothing."""
-    from sdl_flow_optimiser.findings.labels import Labels
-
     labels_path = labels_path or (HERE / "s1_labels.jsonl")
     ground_truth_path = ground_truth_path or GROUND_TRUTH_PATH
     truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
@@ -317,7 +316,7 @@ def confirm(output_path: Path | None = None) -> int:
         "# Lines: [session] my label = classifier label, confidence, tool, intent.",
         "# Delegation events (subtask coordination) inherit the parent phase.",
         "",
-        "## Sessions (S1..S5) — repo · title · opening · first-20 tools",
+        "## Sessions — repo · title · opening · first-20 tools",
     ]
     for o in openings:
         out.append(f"  {tags[o['label']]:<3} {o['repo']:<7} {o['label'][:38]}")

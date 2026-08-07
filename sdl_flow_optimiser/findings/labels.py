@@ -66,7 +66,15 @@ class Labels:
     def _read(path: Path) -> list[dict[str, Any]]:
         if not path.exists():
             return []
-        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue  # torn trailing line (kill/ENOSPC mid-append) — skip, never crash reads
+        return rows
 
     @staticmethod
     def _append(path: Path, record: dict[str, Any]) -> None:

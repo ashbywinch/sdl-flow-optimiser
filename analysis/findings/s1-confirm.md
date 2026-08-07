@@ -2,7 +2,7 @@
 # Lines: [session] my label = classifier label, confidence, tool, intent.
 # Delegation events (subtask coordination) inherit the parent phase.
 
-## Sessions (S1..S5) — repo · title · opening · first-20 tools
+## Sessions — repo · title · opening · first-20 tools
   S1  ompcfg  Create shell repo best practices skill
       open: We're going to make a new skill for making 
       tools: read×13 bash×6 todo×1
