@@ -60,7 +60,8 @@ class ContextResponse:
 
 @dataclass
 class RunDetail:
-    """One activity run as the API reports it: the segment plus the user's
+    """One phase as the API reports it: the span of the human's work (from
+    their opening message through the agent's activity) plus the user's
     verdict (None until adjudicated)."""
 
     run_id: str

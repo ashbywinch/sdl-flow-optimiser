@@ -87,12 +87,15 @@ function textBubble(kind, text) {
   return b;
 }
 
-// ---------- activity runs (the unit the user judges) ----------
+// ---------- phases (the unit the user judges: one span of the human's work) ----------
 
 function runBlock(run, sessionId, calls) {
   const box = el("div", "run");
   box.id = `run-${run.start}`;
   const head = el("div", "r-head");
+  if (run.first_intent) {
+    head.appendChild(el("div", "r-user", `“${run.first_intent}”`));
+  }
   head.appendChild(el("span", "", `${run.call_count} tool calls · my guess: `));
   head.appendChild(el("b", "", `${PHASE_UI[run.phase]} (${run.confidence.toFixed(2)})`));
   box.appendChild(head);
