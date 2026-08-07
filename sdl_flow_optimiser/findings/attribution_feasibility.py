@@ -262,7 +262,11 @@ def session_openings() -> list[Opening]:
 
 def _apply_verdicts(truth: dict[str, int], stores: Labels) -> int:
     """Run verdicts (the primary path): each verdict's phase applies to
-    every call in that run. Idempotent — re-applying changes nothing."""
+    every call in that run. Idempotent — re-applying changes nothing.
+    Without the session store there are no runs to adjudicate — a no-op,
+    so apply_labels works on the label stores alone."""
+    if not STORE.exists():
+        return 0
     applied = 0
     for sample in find_files():
         transcript = Transcript.from_session_file(sample.path)
