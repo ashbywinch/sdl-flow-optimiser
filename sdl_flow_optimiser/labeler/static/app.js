@@ -332,7 +332,7 @@ function showSession(id) {
   wrap.appendChild(el("div", "bar", "loading session…"));
   api(`/api/sessions/${id}`).then((detail) => {
     state.session = detail;
-    state.rendered = 0;
+    state.rendered = CHUNK;
     wrap.textContent = "";
     const meta = state.sessionsList[state.sessionIdx] || {};
     const head = el("div", "shead");
