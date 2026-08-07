@@ -10,10 +10,12 @@ are noise at transcript scale; tool results leave a thin marker.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from sdl_flow_optimiser.findings.attribution_feasibility import classify_with_context
+from sdl_flow_optimiser.findings.labels import Label
 from sdl_flow_optimiser.phase_attribution import PhasePrediction
 
 # Harness-injected preamble: the opening "user" message in some sessions is
@@ -108,5 +110,6 @@ def annotate_transcript(
     for it in items:
         if it["kind"] == "tool_call":
             it["analyst_phase"] = ground_truth.get(it["call_id"])
-            it["label"] = labels.get(it["call_id"])
+            label = labels.get(it["call_id"])
+            it["label"] = asdict(label) if isinstance(label, Label) else label
     return items

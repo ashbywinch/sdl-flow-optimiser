@@ -192,19 +192,23 @@ def classify_with_context(execs: list[dict[str, str]]) -> list[tuple[PhasePredic
 def apply_labels(labels_path: Path | None = None, ground_truth_path: Path | None = None) -> int:
     """Fold user adjudication into the ground truth: a disagreement with a
     corrected phase updates the label; agreements and comment-only
-    disagreements keep it. Idempotent — re-running changes nothing."""
-    labels_path = labels_path or (HERE / "s1_labels.json")
+    disagreements keep it. Reads the append-only label store (latest
+    non-deleted verdict per sample). Idempotent — re-running changes
+    nothing."""
+    from sdl_flow_optimiser.findings.labels import Labels
+
+    labels_path = labels_path or (HERE / "s1_labels.jsonl")
     ground_truth_path = ground_truth_path or GROUND_TRUTH_PATH
-    if not labels_path.exists():
-        print("no labels to apply")
-        return 0
-    labels = json.loads(labels_path.read_text(encoding="utf-8"))
     truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
     applied = 0
-    for call_id, entry in labels.items():
-        phase = entry.get("phase")
-        if not entry.get("agree") and isinstance(phase, int) and phase in PHASE_NAMES and truth.get(call_id) != phase:
-            truth[call_id] = phase
+    for call_id, label in Labels(labels_path).latest_labels_map().items():
+        if (
+            not label.agree
+            and label.phase is not None
+            and label.phase in PHASE_NAMES
+            and truth.get(call_id) != label.phase
+        ):
+            truth[call_id] = label.phase
             applied += 1
     ground_truth_path.write_text(json.dumps(truth) + "\n", encoding="utf-8")
     print(f"applied {applied} corrections to ground truth")

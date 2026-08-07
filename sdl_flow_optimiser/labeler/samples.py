@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import random
 from collections import defaultdict
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -20,7 +21,7 @@ from sdl_flow_optimiser.findings.attribution_feasibility import (
     load_ground_truth,
     sample_execs,
 )
-from sdl_flow_optimiser.labeler.labels import load_labels
+from sdl_flow_optimiser.findings.labels import Labels
 
 DUMP_PATH = Path(__file__).resolve().parent.parent / "findings" / "s1_dump.jsonl"
 
@@ -49,7 +50,7 @@ def build_samples() -> list[Sample]:
     """All adjudicable samples with predictions, grouped per session for
     context-aware classification. Deterministic: committed files only."""
     ground_truth = load_ground_truth()
-    labels = load_labels()
+    labels = Labels().latest_labels_map()
     by_session: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in _dump_rows():
         by_session[row["label"]].append(row)
@@ -72,7 +73,7 @@ def build_samples() -> list[Sample]:
                     "confidence": round(pred.confidence, 2),
                     "delegation": delegation,
                     "truth_phase": truth,
-                    "label": labels.get(ex["call_id"]),
+                    "label": asdict(labels[ex["call_id"]]) if ex["call_id"] in labels else None,
                 }
             )
     return samples

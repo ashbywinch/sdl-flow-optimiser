@@ -118,20 +118,15 @@ def test_session_openings_are_recognizable():
 
 
 def test_apply_labels_folds_disagreements_into_ground_truth(tmp_path):
+    from sdl_flow_optimiser.findings.labels import Labels
+
     gt_path = tmp_path / "gt.json"
-    labels_path = tmp_path / "labels.json"
+    labels_path = tmp_path / "labels.jsonl"
     gt_path.write_text(json.dumps({"a": 6, "b": 6}) + "\n", encoding="utf-8")
-    labels_path.write_text(
-        json.dumps(
-            {
-                "a": {"agree": True, "phase": None, "comment": ""},  # agreement: no change
-                "b": {"agree": False, "phase": 1, "comment": "research"},  # correction
-                "c": {"agree": False, "phase": None, "comment": "unresolved"},  # no phase: no change
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    stores = Labels(labels_path=labels_path)
+    stores.add_label("a", True, None, "")  # agreement: no change
+    stores.add_label("b", False, 1, "research")  # correction
+    stores.add_label("c", False, None, "unresolved")  # no phase: no change
     apply_labels(labels_path, gt_path)
     truth = json.loads(gt_path.read_text(encoding="utf-8"))
     assert truth["a"] == 6

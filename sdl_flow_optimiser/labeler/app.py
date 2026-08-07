@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -22,16 +23,7 @@ from sdl_flow_optimiser.findings.attribution_feasibility import (
     extract_executions,
     load_ground_truth,
 )
-from sdl_flow_optimiser.labeler.labels import (
-    ASSOCIATIONS_PATH,
-    LABELS_PATH,
-    delete_label,
-    load_associations,
-    load_labels,
-    remove_association,
-    save_association,
-    save_label,
-)
+from sdl_flow_optimiser.findings.labels import ASSOCIATIONS_PATH, LABELS_PATH, Labels
 from sdl_flow_optimiser.labeler.samples import Sample, build_samples, sample_counts, select_samples
 from sdl_flow_optimiser.labeler.transcript import annotate_transcript, extract_transcript
 from sdl_flow_optimiser.phase_attribution import PHASE_NAMES
@@ -46,6 +38,7 @@ def create_app(
     associations_path: Path = ASSOCIATIONS_PATH,
 ) -> FastAPI:
     app = FastAPI(title="sdl-flow-optimiser labeler")
+    stores = Labels(labels_path, associations_path)
 
     @app.middleware("http")
     async def no_cache(request, call_next):
@@ -121,7 +114,7 @@ def create_app(
     ) -> dict[str, Any]:
         if phase is not None and phase not in PHASE_NAMES:
             raise HTTPException(status_code=400, detail=f"phase must be one of {sorted(PHASE_NAMES)}")
-        return save_label(call_id, agree, phase, comment, labels_path)
+        return asdict(stores.add_label(call_id, agree, phase, comment))
 
     @app.get("/api/sessions")
     def sessions() -> list[dict[str, Any]]:
@@ -141,30 +134,30 @@ def create_app(
         if path is None or not path.resolve().is_relative_to(STORE.resolve()):
             raise HTTPException(status_code=404, detail="session not on this machine")
         items = extract_transcript(path)
-        annotate_transcript(items, load_ground_truth(), load_labels(labels_path))
+        annotate_transcript(items, load_ground_truth(), stores.latest_labels_map())
         tool_calls = [it for it in items if it["kind"] == "tool_call"]
         return {"id": session_id, "transcript": items, "tool_calls": len(tool_calls)}
 
     @app.delete("/api/labels/{call_id}")
     def delete_label_endpoint(call_id: str) -> dict[str, bool]:
-        """Undo an adjudication."""
-        delete_label(call_id, labels_path)
+        """Undo an adjudication (append-only tombstone)."""
+        stores.remove_label(call_id)
         return {"ok": True}
 
     @app.get("/api/associations")
     def associations() -> list[dict[str, Any]]:
-        return [dict(v) for v in load_associations(associations_path).values()]
+        return [asdict(a) for a in stores.associations()]
 
     @app.post("/api/associations")
     def associate(a: str = Body(...), b: str = Body(...)) -> dict[str, Any]:
         if a == b:
             raise HTTPException(status_code=400, detail="cannot associate a session with itself")
-        return save_association(a, b, associations_path)
+        return asdict(stores.add_association(a, b))
 
     @app.delete("/api/associations")
     def remove_association_endpoint(a: str = Body(...), b: str = Body(...)) -> dict[str, bool]:
         """Remove a session pair (undo a mis-made association)."""
-        remove_association(a, b, associations_path)
+        stores.remove_association(a, b)
         return {"ok": True}
 
     return app

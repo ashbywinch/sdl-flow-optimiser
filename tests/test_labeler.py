@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sdl_flow_optimiser.findings.attribution_feasibility import find_files
+from sdl_flow_optimiser.findings.labels import Label, Labels
 from sdl_flow_optimiser.labeler.app import _repo_display_name, create_app
-from sdl_flow_optimiser.labeler.labels import load_associations, load_labels, save_association, save_label
 from sdl_flow_optimiser.labeler.samples import build_samples, sample_counts, select_samples
 from sdl_flow_optimiser.labeler.transcript import extract_transcript
 
@@ -94,26 +94,32 @@ def test_repo_display_name():
     assert _repo_display_name("tmp-tmp-e9671acd244849c57167c658fa2f969752048f7ab184a3dcf5c46cb4d56ae124") == "tmp"
 
 
-def test_label_round_trip(tmp_path):
-    path = tmp_path / "labels.json"
-    assert save_label("c1", True, None, "looks right", path)["agree"] is True
-    assert save_label("c1", False, 3, "actually flow", path)["phase"] == 3
-    loaded = load_labels(path)
-    assert loaded["c1"] == {
-        "agree": False,
-        "phase": 3,
-        "comment": "actually flow",
-        "updated_at_ms": loaded["c1"]["updated_at_ms"],
-    }
+def test_label_round_trip_is_append_only(tmp_path):
+    path = tmp_path / "labels.jsonl"
+    stores = Labels(labels_path=path)
+    assert stores.add_label("c1", True, None, "looks right").agree is True
+    latest = stores.add_label("c1", False, 3, "actually flow")
+    assert latest.phase == 3
+    assert stores.latest_label("c1") == Label("c1", False, 3, "actually flow", latest.updated_at_ms)
+    # history is preserved, not overwritten
+    history = stores.label_history("c1")
+    assert [h.comment for h in history] == ["looks right", "actually flow"]
+    # tombstone: remove hides, history survives
+    stores.remove_label("c1")
+    assert stores.latest_label("c1") is None
+    assert len(stores.label_history("c1")) == 2
 
 
-def test_association_round_trip_is_sorted(tmp_path):
-    path = tmp_path / "assoc.json"
-    save_association("b-session", "a-session", path)
-    loaded = load_associations(path)
-    assert len(loaded) == 1
-    assoc = next(iter(loaded.values()))
-    assert assoc["a"] == "a-session" and assoc["b"] == "b-session"
+def test_association_round_trip_is_sorted_and_removable(tmp_path):
+    path = tmp_path / "assoc.jsonl"
+    stores = Labels(associations_path=path)
+    stores.add_association("b-session", "a-session")
+    assoc = stores.associations()
+    assert len(assoc) == 1
+    assert assoc[0].a == "a-session" and assoc[0].b == "b-session"
+    # tombstone removal
+    stores.remove_association("b-session", "a-session")
+    assert stores.associations() == []
 
 
 def test_build_samples_from_committed_evidence():
@@ -156,7 +162,7 @@ def test_sample_counts_are_consistent():
 
 
 def _client(tmp_path):
-    return TestClient(create_app(labels_path=tmp_path / "labels.json", associations_path=tmp_path / "assoc.json"))
+    return TestClient(create_app(labels_path=tmp_path / "labels.jsonl", associations_path=tmp_path / "assoc.jsonl"))
 
 
 def test_api_serves_index_and_samples(tmp_path):
@@ -177,8 +183,8 @@ def test_api_label_persists_and_validates(tmp_path):
         "/api/labels", json={"call_id": sample["call_id"], "agree": False, "phase": 3, "comment": "flow work"}
     )
     assert res.status_code == 200
-    saved = load_labels(tmp_path / "labels.json")
-    assert saved[sample["call_id"]]["phase"] == 3
+    saved = Labels(labels_path=tmp_path / "labels.jsonl").latest_labels_map()
+    assert saved[sample["call_id"]].phase == 3
     bad = client.post("/api/labels", json={"call_id": "x", "agree": True, "phase": 99})
     assert bad.status_code == 400
 
@@ -213,10 +219,10 @@ def test_api_label_delete_undoes(tmp_path):
     client = _client(tmp_path)
     sample = client.get("/api/samples?kind=random&n=1&seed=2").json()[0]
     client.post("/api/labels", json={"call_id": sample["call_id"], "agree": False, "phase": 3})
-    assert sample["call_id"] in load_labels(tmp_path / "labels.json")
+    assert sample["call_id"] in Labels(labels_path=tmp_path / "labels.jsonl").latest_labels_map()
     res = client.delete(f"/api/labels/{sample['call_id']}")
     assert res.status_code == 200
-    assert sample["call_id"] not in load_labels(tmp_path / "labels.json")
+    assert sample["call_id"] not in Labels(labels_path=tmp_path / "labels.jsonl").latest_labels_map()
 
 
 @pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
