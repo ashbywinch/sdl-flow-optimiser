@@ -407,16 +407,17 @@ function renderTranscript(wrap) {
     } else if (it.kind === "assistant") {
       wrap.appendChild(textBubble("agent", it.text));
     } else if (it.kind === "tool_call") {
-      const row = el("div", "event");
+      const row = el("div", "event compact");
       row.id = `tc-${i}`;
-      const ehead = el("div", "e-head");
-      ehead.appendChild(el("span", "tag", it.tool));
-      ehead.appendChild(el("span", "phase", `pred: ${PHASE_UI[it.pred_phase]} (${it.confidence})`));
-      if (it.analyst_phase) ehead.appendChild(el("span", "tag", `analyst: ${PHASE_UI[it.analyst_phase]}`));
-      if (it.delegation) ehead.appendChild(el("span", "tag", "delegation"));
-      row.appendChild(ehead);
-      row.appendChild(el("div", "intent", it.intent || it.tool));
-      if (it.label) row.appendChild(el("div", "bar", `marked: ${it.label.agree ? "agree" : "disagree"}${it.label.phase ? " → " + PHASE_UI[it.label.phase] : ""}`));
+      const line = el("div", "tline");
+      line.appendChild(el("span", "tag", it.tool));
+      line.appendChild(el("span", "tintent", it.intent || it.tool));
+      line.appendChild(el("span", "tphase", `${PHASE_UI[it.pred_phase]} ${it.confidence}`));
+      if (it.analyst_phase) line.appendChild(el("span", "tanalyst", `me: ${PHASE_UI[it.analyst_phase]}`));
+      if (it.delegation) line.appendChild(el("span", "tag", "delegation"));
+      if (it.label) line.appendChild(el("span", "tmarked", it.label.agree ? "✓ marked" : `✗ ${it.label.phase ? PHASE_UI[it.label.phase] : "marked"}`));
+      row.appendChild(line);
+      const adj = el("div", "adjudicate");
       const actions = el("div", "e-actions");
       const comment = el("input", "comment");
       comment.placeholder = "comment (optional)";
@@ -429,9 +430,12 @@ function renderTranscript(wrap) {
       bad.onclick = () => submit(false, state.picked);
       actions.appendChild(ok);
       actions.appendChild(bad);
-      row.appendChild(actions);
-      phasePills(row).className = "phasepick pickbtn";
-      row.appendChild(comment);
+      adj.appendChild(actions);
+      phasePills(adj).className = "phasepick pickbtn";
+      adj.appendChild(comment);
+      adj.onclick = (e) => e.stopPropagation();
+      row.appendChild(adj);
+      row.onclick = () => row.classList.toggle("open");
       wrap.appendChild(row);
     }
   }
