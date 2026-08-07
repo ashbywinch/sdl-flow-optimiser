@@ -123,11 +123,11 @@ SAMPLE: list[tuple[str, str, str]] = [
 ]
 
 
-def find_files() -> list[SampleFile]:
+def find_files(store: Path = STORE) -> list[SampleFile]:
     found: list[SampleFile] = []
     for proj, stamp, label in SAMPLE:
         matches: list[Path] = []
-        for d in STORE.iterdir():
+        for d in store.iterdir():
             if not d.is_dir() or proj not in d.name:
                 continue
             matches.extend(p for p in d.glob("*.jsonl") if stamp in p.name)
@@ -236,14 +236,14 @@ def _first_tools(path: Path) -> list[str]:
     return tools
 
 
-def session_openings() -> list[Opening]:
+def session_openings(store: Path = STORE) -> list[Opening]:
     """Recognition anchor per sample session: repo, auto-title, the opening
     user message, and the first-20 tool mix. Auto-titles are unreliable
     (they reflect only the opening); the user's own first words identify the
     work. The tool mix also flags delegated phases (scouts/jobs run in
     subagents — the parent stream only shows the coordination calls)."""
     openings: list[Opening] = []
-    for sample in find_files():
+    for sample in find_files(store):
         path = sample.path
         first_user = _first_user_text(path)
         tools = _first_tools(path)
@@ -260,15 +260,15 @@ def session_openings() -> list[Opening]:
     return openings
 
 
-def _apply_verdicts(truth: dict[str, int], stores: Labels) -> int:
+def _apply_verdicts(truth: dict[str, int], stores: Labels, store: Path = STORE) -> int:
     """Run verdicts (the primary path): each verdict's phase applies to
     every call in that run. Idempotent — re-applying changes nothing.
     Without the session store there are no runs to adjudicate — a no-op,
     so apply_labels works on the label stores alone."""
-    if not STORE.exists():
+    if not store.exists():
         return 0
     applied = 0
-    for sample in find_files():
+    for sample in find_files(store):
         transcript = Transcript.from_session_file(sample.path)
         for run in transcript.runs():
             verdict = stores.latest_run_verdict(run.run_id)
@@ -296,7 +296,7 @@ def _apply_label_corrections(truth: dict[str, int], stores: Labels) -> int:
     return applied
 
 
-def apply_labels(labels_path: Path | None = None, ground_truth_path: Path | None = None) -> int:
+def apply_labels(labels_path: Path | None = None, ground_truth_path: Path | None = None, store: Path = STORE) -> int:
     """Fold user adjudication into the ground truth.
 
     Reads the append-only stores (latest non-deleted records). Idempotent —
@@ -306,15 +306,15 @@ def apply_labels(labels_path: Path | None = None, ground_truth_path: Path | None
     ground_truth_path = ground_truth_path or GROUND_TRUTH_PATH
     truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
     stores = Labels(labels_path)
-    applied = _apply_verdicts(truth, stores) + _apply_label_corrections(truth, stores)
+    applied = _apply_verdicts(truth, stores, store) + _apply_label_corrections(truth, stores)
     ground_truth_path.write_text(json.dumps(truth) + "\n", encoding="utf-8")
     print(f"applied {applied} corrections to ground truth")
     return 0
 
 
-def dump() -> None:
+def dump(store: Path = STORE) -> None:
     rows: list[DumpRow] = []
-    for sample in find_files():
+    for sample in find_files(store):
         for ex in sample_execs(extract_executions(sample.path)):
             rows.append(
                 DumpRow(
@@ -345,7 +345,7 @@ def dump_rows() -> list[DumpRow]:
     return rows
 
 
-def _evaluate_samples(ground_truth: dict[str, int]) -> Evaluation:
+def _evaluate_samples(ground_truth: dict[str, int], store: Path = STORE) -> Evaluation:
     """Run the classifier over the sampled executions and tally agreement.
     Delegation events are counted separately — they are not phase-bearing."""
     correct = 0
@@ -354,7 +354,7 @@ def _evaluate_samples(ground_truth: dict[str, int]) -> Evaluation:
     by_phase: dict[int, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
     confusion: dict[tuple[int, int], int] = defaultdict(int)
     errors: list[PredictionError] = []
-    for sample in find_files():
+    for sample in find_files(store):
         execs = sample_execs(extract_executions(sample.path))
         for ex, classified in zip(execs, classify_with_context(execs), strict=True):
             truth = ground_truth.get(ex.call_id)
@@ -414,12 +414,12 @@ def _print_evaluation(ev: Evaluation, show_errors: bool) -> None:
             print(f"{line} {err.confidence:.2f}")
 
 
-def evaluate(show_errors: bool) -> int:
+def evaluate(show_errors: bool, store: Path = STORE) -> int:
     ground_truth = load_ground_truth()
     if not ground_truth:
         print("ground truth is empty — run --dump, label, re-run.")
         return 1
-    ev = _evaluate_samples(ground_truth)
+    ev = _evaluate_samples(ground_truth, store)
     if ev.total == 0:
         print("no sampled executions matched the ground truth — stale ground truth for this dump?")
         return 1
@@ -432,12 +432,12 @@ def evaluate(show_errors: bool) -> int:
 _SHORT = {1: "prd", 2: "tech", 3: "flow", 4: "brk", 5: "plan", 6: "exec", 7: "pr", 8: "ux"}
 
 
-def _report_rows() -> list[ReportRow]:
+def _report_rows(store: Path = STORE) -> list[ReportRow]:
     """One ReportRow per ground-truthed sampled execution, session-tagged."""
     ground_truth = load_ground_truth()
-    tags = {o.label: f"S{i + 1}" for i, o in enumerate(session_openings())}
+    tags = {o.label: f"S{i + 1}" for i, o in enumerate(session_openings(store))}
     rows: list[ReportRow] = []
-    for sample in find_files():
+    for sample in find_files(store):
         execs = sample_execs(extract_executions(sample.path))
         for ex, classified in zip(execs, classify_with_context(execs), strict=True):
             truth = ground_truth.get(ex.call_id)
@@ -480,7 +480,7 @@ def _render_line(n: int, row: ReportRow) -> str:
     )
 
 
-def confirm(output_path: Path | None = None) -> int:
+def confirm(output_path: Path | None = None, store: Path = STORE) -> int:
     """Write the phone-first confirmation list (default: analysis/findings/s1-confirm.md).
 
     One sample per line, numbered so corrections can be replied as "12, 34
@@ -489,9 +489,9 @@ def confirm(output_path: Path | None = None) -> int:
     output_path lets tests regenerate elsewhere and diff against the
     committed artifact instead of rewriting it.
     """
-    rows = _report_rows()
+    rows = _report_rows(store)
     groups = _group_rows(rows)
-    openings = session_openings()
+    openings = session_openings(store)
     tags = {o.label: f"S{i + 1}" for i, o in enumerate(openings)}
     out = [
         "# S1 confirmation — reply with the numbers of any WRONG labels (e.g. '12 34').",

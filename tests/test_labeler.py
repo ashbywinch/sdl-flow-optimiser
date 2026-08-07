@@ -6,26 +6,12 @@ the context endpoint needs the store and is store-guarded.
 
 import json
 
-import pytest
 from fastapi.testclient import TestClient
 
-from sdl_flow_optimiser.findings.attribution_feasibility import find_files
 from sdl_flow_optimiser.findings.labels import Label, Labels
 from sdl_flow_optimiser.findings.transcript import Transcript
 from sdl_flow_optimiser.labeler.app import _repo_display_name, create_app
 from sdl_flow_optimiser.labeler.samples import build_samples, sample_counts, select_samples
-
-
-def _store_present() -> bool:
-    """True when the omp session store is present; a fresh clone/CI without
-    it must skip the store-guarded tests, not crash at collection."""
-    try:
-        return len(find_files()) == 4
-    except FileNotFoundError:
-        return False
-
-
-STORE_PRESENT = _store_present()
 
 
 def test_transcript_skips_harness_preamble(tmp_path):
@@ -161,8 +147,11 @@ def test_sample_counts_are_consistent():
     assert counts.labeled == sum(1 for s in samples if s["label"])
 
 
-def _client(tmp_path):
-    return TestClient(create_app(labels_path=tmp_path / "labels.jsonl", associations_path=tmp_path / "assoc.jsonl"))
+def _client(tmp_path, store_path=None):
+    kwargs = {"store_path": store_path} if store_path else {}
+    return TestClient(
+        create_app(labels_path=tmp_path / "labels.jsonl", associations_path=tmp_path / "assoc.jsonl", **kwargs)
+    )
 
 
 def test_api_serves_index_and_samples(tmp_path):
@@ -201,9 +190,8 @@ def test_api_associations(tmp_path):
     assert client.get("/api/associations").json() == []
 
 
-@pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
-def test_api_context_shows_surrounding_events(tmp_path):
-    client = _client(tmp_path)
+def test_api_context_shows_surrounding_events(tmp_path, fake_store):
+    client = _client(tmp_path, fake_store)
     sample = client.get("/api/samples?kind=random&n=1&seed=3").json()[0]
     body = client.get(f"/api/samples/{sample['call_id']}/context").json()
     assert len(body["events"]) >= 3
@@ -225,19 +213,17 @@ def test_api_label_delete_undoes(tmp_path):
     assert sample["call_id"] not in Labels(labels_path=tmp_path / "labels.jsonl").latest_labels_map()
 
 
-@pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
-def test_api_rejects_path_traversal_session_id(tmp_path):
+def test_api_rejects_path_traversal_session_id(tmp_path, fake_store):
     """A crafted session_id must not read files outside the store — the
     labeler is LAN-reachable with no auth (PRD trust decision), so the
     containment check is the boundary."""
-    client = _client(tmp_path)
+    client = _client(tmp_path, fake_store)
     for evil in ("..%2F..%2F..%2F..%2F..%2Fetc%2Fhostname", "%2e%2e%2f%2e%2e%2fetc%2fpasswd", "..%2F..%2Fsecret.jsonl"):
         assert client.get(f"/api/sessions/{evil}").status_code == 404
 
 
-@pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
-def test_api_session_detail_returns_readable_transcript(tmp_path):
-    client = _client(tmp_path)
+def test_api_session_detail_returns_readable_transcript(tmp_path, fake_store):
+    client = _client(tmp_path, fake_store)
     sample = client.get("/api/samples?kind=random&n=1&seed=4").json()[0]
     body = client.get(f"/api/sessions/{sample['session_id']}").json()
     kinds = [it["kind"] for it in body["transcript"]]

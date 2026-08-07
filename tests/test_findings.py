@@ -8,31 +8,16 @@ become unreproducible — this test fails instead.
 import json
 from pathlib import Path
 
-import pytest
-
 from sdl_flow_optimiser.findings.attribution_feasibility import (
     PER_SESSION,
     apply_labels,
     confirm,
-    find_files,
     sample_execs,
     session_openings,
 )
 from sdl_flow_optimiser.phase_attribution import classify_with_context
 
 HERE = Path(__file__).resolve().parent.parent / "sdl_flow_optimiser" / "findings"
-
-
-def _store_present() -> bool:
-    """True when the omp session store is present; a fresh clone/CI without
-    it must skip the store-guarded tests, not crash at collection."""
-    try:
-        return len(find_files()) == 4
-    except FileNotFoundError:
-        return False
-
-
-STORE_PRESENT = _store_present()  # fresh clone / CI: store absent — skip, don't crash collection
 
 
 def _load():
@@ -94,22 +79,35 @@ def test_confirm_is_numbered_and_replyable():
     assert numbered[0].startswith("  1."), "numbering must start at 1 so corrections can reference it"
 
 
-@pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
-def test_confirm_output_matches_committed(tmp_path):
-    """Regenerating the confirmation list must exactly reproduce the
-    committed artifact — drift fails the test instead of silently rewriting
-    the repo tree (derived data is regenerated, never hand-edited)."""
+def test_confirm_output_matches_committed(fake_store, tmp_path):
+    """Regenerating the confirmation list over the fake store must exactly
+    reproduce the committed artifact's rows — the sampled executions the
+    fake encodes ARE the committed dump, so the adjudication rows are
+    byte-identical (derived data is regenerated, never hand-edited)."""
     out = tmp_path / "confirm.md"
-    assert confirm(out) == 0
+    assert confirm(out, store=fake_store) == 0
     committed = HERE.parent.parent / "analysis" / "findings" / "s1-confirm.md"
-    assert out.read_text(encoding="utf-8") == committed.read_text(encoding="utf-8")
+
+    def rows_section(text: str) -> str:
+        return text[text.index("## Disagreements") :]
+
+    assert rows_section(out.read_text(encoding="utf-8")) == rows_section(committed.read_text(encoding="utf-8"))
 
 
-@pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
-def test_session_openings_are_recognizable():
+def test_confirm_is_deterministic(fake_store, tmp_path):
+    """Derived data is regenerated, never hand-edited: regenerating twice
+    over the same store produces byte-identical output."""
+    first = tmp_path / "a.md"
+    second = tmp_path / "b.md"
+    assert confirm(first, store=fake_store) == 0
+    assert confirm(second, store=fake_store) == 0
+    assert first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
+
+
+def test_session_openings_are_recognizable(fake_store):
     """Every sample session gets a repo, an opening user message, and a tool
     mix — the recognition anchor for adjudicating samples on a phone."""
-    openings = session_openings()
+    openings = session_openings(fake_store)
     assert len(openings) == 4
     for o in openings:
         assert o.repo

@@ -104,6 +104,7 @@ class SessionSummary:
 def create_app(
     labels_path: Path = LABELS_PATH,
     associations_path: Path = ASSOCIATIONS_PATH,
+    store_path: Path = STORE,
 ) -> FastAPI:
     app = FastAPI(title="sdl-flow-optimiser labeler")
     stores = Labels(labels_path, associations_path)
@@ -144,7 +145,7 @@ def create_app(
         if session_file is None:
             raise HTTPException(status_code=404, detail="sample not in dump")
         path = next(
-            (d / session_file for d in STORE.iterdir() if d.is_dir() and (d / session_file).exists()),
+            (d / session_file for d in store_path.iterdir() if d.is_dir() and (d / session_file).exists()),
             None,
         )
         if path is None:
@@ -186,7 +187,7 @@ def create_app(
 
     @app.get("/api/sessions")
     def sessions() -> list[SessionSummary]:
-        return _list_sessions()
+        return _list_sessions(store_path)
 
     @app.get("/api/sessions/{session_id}")
     def session_detail(session_id: str) -> SessionDetail:
@@ -194,12 +195,12 @@ def create_app(
         text, and classified tool calls in order. The session is the unit of
         work — this is the surf-and-judge surface."""
         path = next(
-            (d / session_id for d in STORE.iterdir() if d.is_dir() and (d / session_id).exists()),
+            (d / session_id for d in store_path.iterdir() if d.is_dir() and (d / session_id).exists()),
             None,
         )
         # containment: a crafted session_id (e.g. percent-encoded ../) must
         # not read files outside the store — the labeler is LAN-reachable
-        if path is None or not path.resolve().is_relative_to(STORE.resolve()):
+        if path is None or not path.resolve().is_relative_to(store_path.resolve()):
             raise HTTPException(status_code=404, detail="session not on this machine")
         transcript = Transcript.from_session_file(path)
         transcript.annotate(load_ground_truth(), stores.latest_labels_map())
@@ -334,11 +335,11 @@ class SessionScan:
             self.ended_at = ts
 
 
-def _list_sessions() -> list[SessionSummary]:
+def _list_sessions(store: Path) -> list[SessionSummary]:
     """Every session in the store with its opening — the surf-and-associate
     list. Reads the store (this machine)."""
     sessions: list[SessionSummary] = []
-    for d in sorted(STORE.iterdir()):
+    for d in sorted(store.iterdir()):
         if not d.is_dir():
             continue
         for path in sorted(d.glob("*.jsonl")):
