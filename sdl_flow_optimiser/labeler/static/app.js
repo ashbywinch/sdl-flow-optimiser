@@ -14,7 +14,7 @@ const PHASE_UI = {
 
 const CHUNK = 100;
 const COLLAPSE_AT = 300;
-const VERSION = "v9-conversation";
+const VERSION = "v10-no-popups";
 
 const state = {
   samples: [],
@@ -88,32 +88,33 @@ async function adjudicate(callId, predPhase, agree, phase, comment, after) {
   refreshSets();
 }
 
-function openOverlay(title, text) {
-  const modal = document.getElementById("modal");
-  document.getElementById("modal-title").textContent = title;
-  document.getElementById("modal-body").textContent = text;
-  modal.classList.add("open");
-}
-
-function closeOverlay() {
-  document.getElementById("modal").classList.remove("open");
-}
-
 function textBubble(kind, text) {
-  // Monster texts (pasted prompts, long replies) never expand in the flow —
-  // they stay a compact chip; tap opens a scrollable overlay that leaves
-  // the transcript untouched.
+  // Long messages collapse to a chip; tap expands INLINE (never a popup),
+  // with a collapse link to shrink back. The transcript flow is preserved.
   const who = kind === "you" ? "You:" : "Agent:";
   const b = el("div", `bubble ${kind}`);
   if (text.length <= COLLAPSE_AT) {
     b.textContent = `${who} ${text}`;
     return b;
   }
-  b.textContent = `${who} ${text.slice(0, 100)}…`;
-  b.classList.add("collapsed");
-  const meta = el("span", "expand", ` (${Math.round(text.length / 1000)}k chars — tap to view)`);
-  b.appendChild(meta);
-  b.onclick = () => openOverlay(`${who} full message (${Math.round(text.length / 1000)}k chars)`, text);
+  const chip = () => {
+    b.textContent = `${who} ${text.slice(0, 100)}…`;
+    const meta = el("span", "expand", ` (${Math.round(text.length / 1000)}k chars — tap to expand)`);
+    b.appendChild(meta);
+  };
+  const full = () => {
+    b.textContent = `${who} ${text}`;
+    const less = el("span", "expand", " (collapse)");
+    b.appendChild(less);
+  };
+  chip();
+  b.onclick = () => {
+    if (b.textContent.includes("collapse")) {
+      chip();
+    } else {
+      full();
+    }
+  };
   return b;
 }
 
@@ -509,10 +510,6 @@ document.getElementById("associate").onclick = async () => {
 document.getElementById("associate-cancel").onclick = () => {
   state.selected = [];
   renderSessions();
-};
-document.getElementById("modal-close").onclick = closeOverlay;
-document.getElementById("modal").onclick = (e) => {
-  if (e.target.id === "modal") closeOverlay();
 };
 document.getElementById("sess-top").onclick = () => {
   document.getElementById("sessions").scrollIntoView();
