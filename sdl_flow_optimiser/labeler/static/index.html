@@ -62,6 +62,19 @@
   .bubble { border-radius:12px; padding:10px 12px; margin:6px 0; font-size:15px; }
   .bubble.you { background:#1d3a5f; }
   .bubble.agent { background:#26262a; color:#ddd; }
+  .bubble .expand { color:var(--acc); cursor:pointer; }
+  .selected { outline:2px solid var(--acc) !important; }
+  #selectbar { position:fixed; bottom:0; left:0; right:0; background:#222; border-top:1px solid #444;
+    padding:10px 14px; display:flex; gap:10px; align-items:center; z-index:9; }
+  #selectbar span { flex:1; font-size:14px; }
+  #selectbar button { padding:10px 16px; border-radius:8px; border:none; background:var(--acc); color:#000; font-weight:600; }
+  #selectbar button:disabled { opacity:.4; }
+  #selectbar .cancel { background:#333; color:var(--dim); }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  .chips button { padding:5px 10px; border-radius:999px; border:1px solid #444; background:#222; color:var(--fg); font-size:13px; }
+  .chunkbar { display:flex; gap:8px; margin:10px 0; }
+  .chunkbar button { flex:1; padding:12px; border-radius:10px; border:1px solid #444; background:#222; color:var(--fg); font-size:15px; }
+  .collapsed { cursor:pointer; }
 </style>
 </head>
 <body>
@@ -94,6 +107,11 @@
   <section id="pane-sessions" hidden>
     <div class="bar">Tap a session to open its full contents. Pick two sessions that are the same piece of work, then Associate.</div>
     <div id="sessions"></div>
+    <div id="selectbar" style="display:none">
+      <span id="selectcount"></span>
+      <button id="associate-cancel" class="cancel">Clear</button>
+      <button id="associate">Associate</button>
+    </div>
     <div class="assoc">
       <button id="associate" disabled style="padding:10px 16px;border-radius:8px;border:none;background:var(--acc);color:#000;font-weight:600">Associate selected</button>
       <div id="assoc-list"></div>

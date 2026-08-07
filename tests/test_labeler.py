@@ -105,6 +105,10 @@ def test_api_associations(tmp_path):
     assert client.post("/api/associations", json={"a": "plan-session", "b": "exec-session"}).status_code == 200
     assoc = client.get("/api/associations").json()
     assert len(assoc) == 1
+    # undo works regardless of argument order (sorted key)
+    res = client.request("DELETE", "/api/associations", json={"a": "exec-session", "b": "plan-session"})
+    assert res.status_code == 200
+    assert client.get("/api/associations").json() == []
 
 
 @pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")

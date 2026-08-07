@@ -157,6 +157,16 @@ def create_app(
             raise HTTPException(status_code=400, detail="cannot associate a session with itself")
         return save_association(a, b, associations_path)
 
+    @app.delete("/api/associations")
+    def remove_association(a: str = Body(...), b: str = Body(...)) -> dict[str, bool]:
+        """Remove a session pair (undo a mis-made association)."""
+        associations = load_associations(associations_path)
+        key = json.dumps(sorted([a, b]))
+        if key in associations:
+            del associations[key]
+            _save(associations_path, associations)
+        return {"ok": True}
+
     return app
 
 
