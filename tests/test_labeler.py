@@ -74,6 +74,21 @@ def test_transcript_keeps_long_user_pastes_after_opening(tmp_path):
     assert sum(1 for it in items if it["kind"] == "user") == 2
 
 
+def test_repo_display_name():
+    from sdl_flow_optimiser.labeler.app import _repo_display_name
+
+    assert (
+        _repo_display_name("home-houses-1152d36eb194fb21914281c38f50d4caa2ef82b1728d228aaab672c3fb43cd5a") == "houses"
+    )
+    assert _repo_display_name("-Documents-code-chat-workflow") == "chat-workflow"
+    assert (
+        _repo_display_name("home-omp-config-0d0030f1432e0d4dfbef84b45623fd2539975acf69b1d3b75eb46e0c91c303e5")
+        == "omp-config"
+    )
+    assert _repo_display_name("-.paseo-worktrees-1qx6axnz-grand-buffalo") == "worktree: grand-buffalo"
+    assert _repo_display_name("tmp-tmp-e9671acd244849c57167c658fa2f969752048f7ab184a3dcf5c46cb4d56ae124") == "tmp"
+
+
 def test_label_round_trip(tmp_path):
     path = tmp_path / "labels.json"
     assert save_label("c1", True, None, "looks right", path)["agree"] is True

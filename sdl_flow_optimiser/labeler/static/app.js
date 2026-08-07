@@ -273,7 +273,7 @@ function renderSessions() {
   wrap.textContent = "";
   const groupedIds = new Set(state.associations.flatMap((a) => [a.a, a.b]));
   const byRepo = {};
-  for (const s of state.sessionsList) (byRepo[s.repo] = byRepo[s.repo] || []).push(s);
+  for (const s of state.sessionsList) (byRepo[s.repo_name] = byRepo[s.repo_name] || []).push(s);
   for (const [repo, sessions] of Object.entries(byRepo)) {
     wrap.appendChild(el("div", "bar", repo));
     for (const s of sessions) {
@@ -283,7 +283,7 @@ function renderSessions() {
       if (s.agent_run) row.appendChild(el("span", "tag", "agent run — no conversation"));
       const title = el("div", "s-title", `${s.title || "(untitled)"}`);
       row.appendChild(title);
-      row.appendChild(el("div", "s-meta", `${s.started_at.slice(0, 16)} · ${s.user_messages} messages · ${Object.entries(s.tools).map(([t, c]) => `${t}×${c}`).join(" ")}`));
+      row.appendChild(el("div", "s-meta", `${fmtRange(s.started_at, s.ended_at)} · ${s.user_messages} messages · ${Object.entries(s.tools).map(([t, c]) => `${t}×${c}`).join(" ")}`));
       row.appendChild(el("div", "s-meta", s.opening || ""));
       const rowbtns = el("div", "e-actions");
       const open = el("button", "ok", "Open session →");
@@ -339,6 +339,16 @@ async function refreshAssociations() {
 
 // ---------- session transcript (chunked) ----------
 
+function fmtRange(startIso, endIso) {
+  if (!startIso) return "";
+  const s = new Date(startIso);
+  const e = endIso ? new Date(endIso) : s;
+  const time = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const date = (d) => d.toLocaleDateString([], { day: "numeric", month: "short" });
+  if (s.toDateString() === e.toDateString()) return `${date(s)} ${time(s)}–${time(e)}`;
+  return `${date(s)} ${time(s)} – ${date(e)} ${time(e)}`;
+}
+
 function updateSessionBar() {
   const bar = document.getElementById("sessbar");
   if (!state.session) {
@@ -375,8 +385,8 @@ function showSession(id) {
     next.onclick = () => { if (state.sessionIdx < state.sessionsList.length - 1) showSession(state.sessionsList[state.sessionIdx + 1].id); };
     head.appendChild(next);
     wrap.appendChild(head);
-    wrap.appendChild(el("div", "s-title", meta.title || "(untitled)"));
-    wrap.appendChild(el("div", "s-meta", `${meta.repo || ""} · ${detail.tool_calls} tool calls · ${detail.transcript.length} events`));
+    wrap.appendChild(el("div", "s-title", `Session · ${meta.title || "(untitled)"}`));
+    wrap.appendChild(el("div", "s-meta", `${meta.repo_name || ""} · ${fmtRange(meta.started_at, meta.ended_at)} · ${detail.tool_calls} tool calls`));
     const mode = el("div", "chips");
     const conv = el("button", state.mode === "conversation" ? "sel" : "", "Conversation");
     const all = el("button", state.mode === "all" ? "sel" : "", "All");

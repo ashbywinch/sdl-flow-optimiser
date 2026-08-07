@@ -175,6 +175,26 @@ def _dump_rows() -> list[dict[str, str]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def _repo_display_name(dir_name: str) -> str:
+    """Human-readable repo name from the store's hashed directory name:
+    home-houses-<hash> -> houses; -Documents-code-chat-workflow ->
+    chat-workflow; -.paseo-worktrees-<hash>-brave-spider -> worktree:
+    brave-spider."""
+    import re
+
+    m = re.search(r"paseo-worktrees-[0-9a-z]+-(.+)$", dir_name)
+    if m:
+        return f"worktree: {m.group(1)}"
+    name = dir_name
+    fallback = dir_name
+    for prefix, label in (("home-", ""), ("-Documents-code-", ""), ("tmp-tmp-", "tmp"), ("-", "")):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            fallback = label or name
+            break
+    return re.sub(r"-?[0-9a-f]{32,}$", "", name) or fallback
+
+
 def _list_sessions() -> list[dict[str, Any]]:
     """Every session in the store with its opening — the surf-and-associate
     list. Reads the store (this machine)."""
@@ -188,6 +208,7 @@ def _list_sessions() -> list[dict[str, Any]]:
             title = ""
             first_user = ""
             started_at = ""
+            ended_at = ""
             tools: list[str] = []
             first_user_seen = False
             user_messages = 0
@@ -217,6 +238,9 @@ def _list_sessions() -> list[dict[str, Any]]:
                                         continue  # harness-injected preamble
                                 first_user = first_user or texts[0]
                                 user_messages += 1
+                    ts = o.get("timestamp")
+                    if ts:
+                        ended_at = ts
                     elif t == "custom" and o.get("customType") == "tool_execution_start" and len(tools) < 10:
                         tools.append(o.get("data", {}).get("toolName", ""))
                     if title and first_user and started_at and len(tools) >= 10:
@@ -225,9 +249,11 @@ def _list_sessions() -> list[dict[str, Any]]:
                 {
                     "id": path.name,
                     "repo": d.name,
+                    "repo_name": _repo_display_name(d.name),
                     "title": title,
                     "opening": first_user[:160],
                     "started_at": started_at,
+                    "ended_at": ended_at,
                     "tools": dict(Counter(tools).most_common(4)),
                     "user_messages": user_messages,
                     "agent_run": user_messages == 0,
