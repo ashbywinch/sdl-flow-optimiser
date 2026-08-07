@@ -76,17 +76,18 @@ flowchart LR
 |---|---|---|
 | Language | Python 3.12 | — |
 | ORM | SQLAlchemy 2.x | raw SQL: loses model↔class mapping the user required; hand-rolled migration pain |
-| Store | Postgres 16 + pgvector | SQLite: no vector storage — user chose Postgres specifically for pgvector; DuckDB: analytic speed but no vector story, heavier dep |
+| Store | Postgres 16 + pgvector | SQLite: no vector support, so the "semantic similarity search" PRD requirement (ambiguous research reads, plan→execute linkage) would force a later migration; DuckDB: analytic speed but no vector story, heavier dep |
 | Schema migrations | Alembic | raw SQL migrations: no rollback/versioning discipline |
 | Testing | pytest | — |
 | Lint/format | ruff | — |
 | Entry point | Makefile | one dev entry point per house scaffold convention |
 | Embeddings | pgvector + a small local embedding model (e.g. sentence-transformers) | hosted APIs: PRD says nothing leaves the machine |
 
-Rationale: PRD constraint "local Postgres, pgvector" + "boring standard
-tooling (Makefile + Python + SQLAlchemy)" + "model objects correspond to
-classes" → SQLAlchemy models are the contract between layers; stages never
-hand-roll SQL.
+Rationale: PRD requirements "local durable store" + "semantic similarity
+search" (which SQLite cannot serve without a later migration) + "boring
+standard tooling (Makefile + Python + SQLAlchemy)" + "model objects
+correspond to classes" → SQLAlchemy models are the contract between layers;
+stages never hand-roll SQL.
 
 ## Spikes required to confirm
 

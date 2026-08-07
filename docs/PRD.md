@@ -49,9 +49,15 @@ reading their sessions back and adjudicating it in a phone-usable web tool.
   user never typed. Such content must never appear in what the user reads
   back — transcripts and openings show only the user's own words and the
   agent's responses.
-- **Storage: local Postgres.** One instance on the laptop, pgvector enabled.
-  All pipeline outputs persist to the DB — the DB is the record of every
-  decision the pipeline made, not just the normalized logs.
+- **Local durable store.** All pipeline outputs persist in a local, queryable
+  store on the laptop — the record of every decision the pipeline made, able
+  to answer time-series questions over runs (the V2 dashboard reads runs, it
+  never recomputes history). Data never leaves the machine.
+- **Semantic similarity search.** The analysis must compare session content
+  by meaning, not just exact match: attributing ambiguous research reads and
+  linking a planning session to its execution session both need text-similarity
+  search over the stored content. The store must support this from day one,
+  not require a migration when the need is confirmed.
 - **Attribution is uncertain.** Mapping events → project/phase/PR is heuristic;
   some events are phase-ambiguous. Never present a metric as fact without its
   confidence. No metric ships without user-validated attribution.
