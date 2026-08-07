@@ -72,6 +72,13 @@
   .bubble { border-radius:12px; padding:10px 12px; margin:6px 0; font-size:15px; }
   .bubble.you { background:#1d3a5f; }
   .bubble.agent { background:#26262a; color:#ddd; }
+  .bubble.expanded { max-height:65vh; overflow-y:auto; }
+  .bubble .collapsebar { position:sticky; top:0; z-index:1; display:flex; justify-content:flex-end;
+    padding-bottom:4px; margin-bottom:4px; }
+  .bubble.you .collapsebar { background:#1d3a5f; }
+  .bubble.agent .collapsebar { background:#26262a; }
+  .bubble .collapsebar button { background:none; border:1px solid #444; color:var(--fg);
+    border-radius:8px; padding:6px 10px; font-size:13px; }
   .bubble .expand { color:var(--acc); cursor:pointer; }
   .selected { outline:2px solid var(--acc) !important; }
   #selectbar { position:fixed; bottom:0; left:0; right:0; background:#222; border-top:1px solid #444;

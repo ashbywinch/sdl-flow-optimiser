@@ -89,27 +89,41 @@ async function adjudicate(callId, predPhase, agree, phase, comment, after) {
 }
 
 function textBubble(kind, text) {
-  // Long messages collapse to a chip; tap expands INLINE (never a popup),
-  // with a collapse link to shrink back. The transcript flow is preserved.
+  // Long messages collapse to a chip. Expanded, the message becomes a
+  // bounded scrollable box with a sticky collapse bar pinned to its top —
+  // the control stays visible from anywhere inside the content, so the user
+  // never has to scroll to find it again (standard expandable-text pattern).
   const who = kind === "you" ? "You:" : "Agent:";
   const b = el("div", `bubble ${kind}`);
   if (text.length <= COLLAPSE_AT) {
     b.textContent = `${who} ${text}`;
     return b;
   }
+  b.setAttribute("role", "button");
   const chip = () => {
+    b.classList.remove("expanded");
+    b.setAttribute("aria-expanded", "false");
     b.textContent = `${who} ${text.slice(0, 100)}…`;
     const meta = el("span", "expand", ` (${Math.round(text.length / 1000)}k chars — tap to expand)`);
     b.appendChild(meta);
   };
   const full = () => {
-    b.textContent = `${who} ${text}`;
-    const less = el("span", "expand", " (collapse)");
-    b.appendChild(less);
+    b.classList.add("expanded");
+    b.setAttribute("aria-expanded", "true");
+    b.textContent = "";
+    const bar = el("div", "collapsebar");
+    const btn = el("button", "", "✕ collapse");
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      chip();
+    };
+    bar.appendChild(btn);
+    b.appendChild(bar);
+    b.appendChild(document.createTextNode(`${who} ${text}`));
   };
   chip();
   b.onclick = () => {
-    if (b.textContent.includes("collapse")) {
+    if (b.classList.contains("expanded")) {
       chip();
     } else {
       full();
