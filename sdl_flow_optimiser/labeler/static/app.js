@@ -72,7 +72,7 @@ function toast(msg, undoFn) {
   t._timer = setTimeout(() => { t.style.display = "none"; }, 6000);
 }
 
-async function adjudicate(callId, predPhase, agree, phase, comment, after) {
+async function adjudicate(callId, predPhase, agree, phase, comment, after, undoAfter) {
   await api("/api/labels", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -81,7 +81,7 @@ async function adjudicate(callId, predPhase, agree, phase, comment, after) {
   const verdict = agree ? `Saved: agree — ${PHASE_UI[predPhase]}` : `Saved: disagree — ${PHASE_UI[predPhase]}${phase ? " → " + PHASE_UI[phase] : " (no correction)"}`;
   toast(verdict, async () => {
     await api(`/api/labels/${callId}`, { method: "DELETE" });
-    after && after();
+    undoAfter && undoAfter();
     refreshSets();
   });
   after && after();
@@ -247,12 +247,25 @@ function renderLabel() {
   const ok = el("button", "ok", "✓ Agree");
   const bad = el("button", "bad", "✗ Disagree");
   const submit = async (agree, phase) => {
-    await adjudicate(s.call_id, s.pred_phase, agree, phase, comment.value, () => {
-      state.batch.push({ verdict: agree ? "agree" : "disagree", phase, pred: s.pred_phase, session: s.session, intent: s.intent });
-      state.idx += 1;
-      state.picked = null;
-      renderLabel();
-    });
+    await adjudicate(
+      s.call_id,
+      s.pred_phase,
+      agree,
+      phase,
+      comment.value,
+      () => {
+        state.batch.push({ verdict: agree ? "agree" : "disagree", phase, pred: s.pred_phase, session: s.session, intent: s.intent });
+        state.idx += 1;
+        state.picked = null;
+        renderLabel();
+      },
+      () => {
+        // undo: return to the sample that was just marked, don't advance again
+        state.idx = Math.max(0, state.idx - 1);
+        state.picked = null;
+        renderLabel();
+      }
+    );
   };
   ok.onclick = () => submit(true, null);
   bad.onclick = () => submit(false, state.picked);
@@ -466,7 +479,15 @@ function renderTranscript(wrap) {
       const ok = el("button", "ok", "✓ Agree");
       const bad = el("button", "bad", "✗ Disagree");
       const submit = async (agree, phase) => {
-        await adjudicate(it.call_id, it.pred_phase, agree, phase, comment.value, () => showSession(detail.id));
+        await adjudicate(
+          it.call_id,
+          it.pred_phase,
+          agree,
+          phase,
+          comment.value,
+          () => showSession(detail.id),
+          () => showSession(detail.id)
+        );
       };
       ok.onclick = () => submit(true, null);
       bad.onclick = () => submit(false, state.picked);

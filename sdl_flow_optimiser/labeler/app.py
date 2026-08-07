@@ -8,6 +8,8 @@ surrounding transcript context for each, and session association.
 from __future__ import annotations
 
 import json
+import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -23,9 +25,10 @@ from sdl_flow_optimiser.findings.attribution_feasibility import (
 from sdl_flow_optimiser.labeler.labels import (
     ASSOCIATIONS_PATH,
     LABELS_PATH,
-    _save,
+    delete_label,
     load_associations,
     load_labels,
+    remove_association,
     save_association,
     save_label,
 )
@@ -86,7 +89,9 @@ def create_app(
         if path is None:
             raise HTTPException(status_code=404, detail="session file not on this machine")
         execs = extract_executions(path)
-        index = next(i for i, e in enumerate(execs) if e["call_id"] == call_id)
+        index = next((i for i, e in enumerate(execs) if e["call_id"] == call_id), None)
+        if index is None:
+            raise HTTPException(status_code=404, detail="call not in this session")
         preds = classify_with_context(execs)
         lo = max(0, index - window - offset)
         hi = min(len(execs), index + window + 1 + offset)
@@ -131,7 +136,9 @@ def create_app(
             (d / session_id for d in STORE.iterdir() if d.is_dir() and (d / session_id).exists()),
             None,
         )
-        if path is None:
+        # containment: a crafted session_id (e.g. percent-encoded ../) must
+        # not read files outside the store — the labeler is LAN-reachable
+        if path is None or not path.resolve().is_relative_to(STORE.resolve()):
             raise HTTPException(status_code=404, detail="session not on this machine")
         items = extract_transcript(path)
         annotate_transcript(items, load_ground_truth(), load_labels(labels_path))
@@ -139,12 +146,9 @@ def create_app(
         return {"id": session_id, "transcript": items, "tool_calls": len(tool_calls)}
 
     @app.delete("/api/labels/{call_id}")
-    def delete_label(call_id: str) -> dict[str, bool]:
+    def delete_label_endpoint(call_id: str) -> dict[str, bool]:
         """Undo an adjudication."""
-        labels = load_labels(labels_path)
-        if call_id in labels:
-            del labels[call_id]
-            _save(labels_path, labels)
+        delete_label(call_id, labels_path)
         return {"ok": True}
 
     @app.get("/api/associations")
@@ -158,13 +162,9 @@ def create_app(
         return save_association(a, b, associations_path)
 
     @app.delete("/api/associations")
-    def remove_association(a: str = Body(...), b: str = Body(...)) -> dict[str, bool]:
+    def remove_association_endpoint(a: str = Body(...), b: str = Body(...)) -> dict[str, bool]:
         """Remove a session pair (undo a mis-made association)."""
-        associations = load_associations(associations_path)
-        key = json.dumps(sorted([a, b]))
-        if key in associations:
-            del associations[key]
-            _save(associations_path, associations)
+        remove_association(a, b, associations_path)
         return {"ok": True}
 
     return app
@@ -180,8 +180,6 @@ def _repo_display_name(dir_name: str) -> str:
     home-houses-<hash> -> houses; -Documents-code-chat-workflow ->
     chat-workflow; -.paseo-worktrees-<hash>-brave-spider -> worktree:
     brave-spider."""
-    import re
-
     m = re.search(r"paseo-worktrees-[0-9a-z]+-(.+)$", dir_name)
     if m:
         return f"worktree: {m.group(1)}"
@@ -198,8 +196,6 @@ def _repo_display_name(dir_name: str) -> str:
 def _list_sessions() -> list[dict[str, Any]]:
     """Every session in the store with its opening — the surf-and-associate
     list. Reads the store (this machine)."""
-    from collections import Counter
-
     sessions: list[dict[str, Any]] = []
     for d in sorted(STORE.iterdir()):
         if not d.is_dir():
@@ -238,11 +234,11 @@ def _list_sessions() -> list[dict[str, Any]]:
                                         continue  # harness-injected preamble
                                 first_user = first_user or texts[0]
                                 user_messages += 1
+                    elif t == "custom" and o.get("customType") == "tool_execution_start" and len(tools) < 10:
+                        tools.append(o.get("data", {}).get("toolName", ""))
                     ts = o.get("timestamp")
                     if ts:
                         ended_at = ts
-                    elif t == "custom" and o.get("customType") == "tool_execution_start" and len(tools) < 10:
-                        tools.append(o.get("data", {}).get("toolName", ""))
                     if title and first_user and started_at and len(tools) >= 10:
                         break
             sessions.append(

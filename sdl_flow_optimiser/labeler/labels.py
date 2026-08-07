@@ -61,3 +61,20 @@ def save_association(a: str, b: str, path: Path = ASSOCIATIONS_PATH) -> dict[str
     associations[key] = {"a": first, "b": second, "created_at_ms": int(time.time() * 1000)}
     _save(path, associations)
     return associations[key]
+
+
+def delete_label(call_id: str, path: Path = LABELS_PATH) -> None:
+    """Undo an adjudication — one write path for the label store."""
+    labels = load_labels(path)
+    if call_id in labels:
+        del labels[call_id]
+        _save(path, labels)
+
+
+def remove_association(a: str, b: str, path: Path = ASSOCIATIONS_PATH) -> None:
+    """Remove a session pair — one write path for the association store."""
+    associations = load_associations(path)
+    key = json.dumps(sorted([a, b]))
+    if key in associations:
+        del associations[key]
+        _save(path, associations)

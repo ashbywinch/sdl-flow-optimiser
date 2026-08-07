@@ -10,18 +10,27 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sdl_flow_optimiser.findings.attribution_feasibility import find_files
-from sdl_flow_optimiser.labeler.app import create_app
+from sdl_flow_optimiser.labeler.app import _repo_display_name, create_app
 from sdl_flow_optimiser.labeler.labels import load_associations, load_labels, save_association, save_label
 from sdl_flow_optimiser.labeler.samples import build_samples, sample_counts, select_samples
+from sdl_flow_optimiser.labeler.transcript import extract_transcript
 
-STORE_PRESENT = len(find_files()) == 4
+
+def _store_present() -> bool:
+    """True when the omp session store is present; a fresh clone/CI without
+    it must skip the store-guarded tests, not crash at collection."""
+    try:
+        return len(find_files()) == 4
+    except FileNotFoundError:
+        return False
+
+
+STORE_PRESENT = _store_present()
 
 
 def test_transcript_skips_harness_preamble(tmp_path):
     """The opening user message, when it is a huge machine-generated prompt,
     is dropped; the user's real short opening is the first user item."""
-    from sdl_flow_optimiser.labeler.transcript import extract_transcript
-
     f = tmp_path / "s.jsonl"
     f.write_text(
         "\n".join(
@@ -50,8 +59,6 @@ def test_transcript_skips_harness_preamble(tmp_path):
 
 def test_transcript_keeps_long_user_pastes_after_opening(tmp_path):
     """A long user message AFTER the opening is real content (a paste), kept."""
-    from sdl_flow_optimiser.labeler.transcript import extract_transcript
-
     f = tmp_path / "s.jsonl"
     f.write_text(
         "\n".join(
@@ -75,8 +82,6 @@ def test_transcript_keeps_long_user_pastes_after_opening(tmp_path):
 
 
 def test_repo_display_name():
-    from sdl_flow_optimiser.labeler.app import _repo_display_name
-
     assert (
         _repo_display_name("home-houses-1152d36eb194fb21914281c38f50d4caa2ef82b1728d228aaab672c3fb43cd5a") == "houses"
     )
@@ -139,10 +144,15 @@ def test_select_disagreements_matches_truth_and_pred():
 
 
 def test_sample_counts_are_consistent():
+    samples = build_samples()
+    adjudicable = [s for s in samples if not s["delegation"]]
+    lowconf = [s for s in adjudicable if s["confidence"] < 0.5]
+    disagreements = [s for s in adjudicable if s["truth_phase"] != s["pred_phase"]]
     counts = sample_counts()
-    assert counts["total"] == counts["lowconf"] + counts["total"] - counts["lowconf"]
-    assert counts["disagreements"] <= counts["total"]
-    assert counts["labeled"] >= 0
+    assert counts["total"] == len(adjudicable)
+    assert counts["lowconf"] == len(lowconf)
+    assert counts["disagreements"] == len(disagreements)
+    assert counts["labeled"] == sum(1 for s in samples if s["label"])
 
 
 def _client(tmp_path):
@@ -207,6 +217,16 @@ def test_api_label_delete_undoes(tmp_path):
     res = client.delete(f"/api/labels/{sample['call_id']}")
     assert res.status_code == 200
     assert sample["call_id"] not in load_labels(tmp_path / "labels.json")
+
+
+@pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
+def test_api_rejects_path_traversal_session_id(tmp_path):
+    """A crafted session_id must not read files outside the store — the
+    labeler is LAN-reachable with no auth (PRD trust decision), so the
+    containment check is the boundary."""
+    client = _client(tmp_path)
+    for evil in ("..%2F..%2F..%2F..%2F..%2Fetc%2Fhostname", "%2e%2e%2f%2e%2e%2fetc%2fpasswd", "..%2F..%2Fsecret.jsonl"):
+        assert client.get(f"/api/sessions/{evil}").status_code == 404
 
 
 @pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")

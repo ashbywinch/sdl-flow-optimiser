@@ -249,6 +249,9 @@ def evaluate(show_errors: bool) -> int:
                 by_phase[truth]["fn"] += 1
                 by_phase[pred.phase_id]["fp"] += 1
                 errors.append((ex["tool"], ex["intent"], truth, pred.phase_id, pred.confidence))
+    if total == 0:
+        print("no sampled executions matched the ground truth — stale ground truth for this dump?")
+        return 1
     print(f"accuracy: {correct}/{total} = {correct / total:.2%} (delegation events excluded: {delegation_n})")
     print(f"{'phase':<12}{'prec':>7}{'recall':>8}{'n':>5}")
     for phase in sorted(by_phase):
@@ -275,12 +278,14 @@ def evaluate(show_errors: bool) -> int:
 _SHORT = {1: "prd", 2: "tech", 3: "flow", 4: "brk", 5: "plan", 6: "exec", 7: "pr", 8: "ux"}
 
 
-def confirm() -> int:
-    """Write the phone-first confirmation list (analysis/findings/s1-confirm.md).
+def confirm(output_path: Path | None = None) -> int:
+    """Write the phone-first confirmation list (default: analysis/findings/s1-confirm.md).
 
     One sample per line, numbered so corrections can be replied as "12, 34
     wrong"; disagreements first (lowest confidence first), then agreed
     low-confidence predictions. Lines are width-constrained for a phone.
+    output_path lets tests regenerate elsewhere and diff against the
+    committed artifact instead of rewriting it.
     """
     ground_truth = load_ground_truth()
     openings = session_openings()
@@ -320,7 +325,7 @@ def confirm() -> int:
     out += [line(i, r) for i, r in enumerate(low_conf_agreed, len(disagreements) + 1)]
     out += ["", f"## Delegation ({len(delegations)}) — subtask coordination, context-inherited"]
     out += [line(i, r) for i, r in enumerate(delegations, len(disagreements) + len(low_conf_agreed) + 1)]
-    path = Path(__file__).resolve().parents[2] / "analysis" / "findings" / "s1-confirm.md"
+    path = output_path or (Path(__file__).resolve().parents[2] / "analysis" / "findings" / "s1-confirm.md")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
     print(f"wrote {len(disagreements)} disagreements + {len(low_conf_agreed)} low-confidence to {path}")

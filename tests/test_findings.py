@@ -12,15 +12,27 @@ import pytest
 
 from sdl_flow_optimiser.findings.attribution_feasibility import (
     PER_SESSION,
+    apply_labels,
     classify_with_context,
     confirm,
     find_files,
     sample_execs,
+    session_openings,
 )
 
 HERE = Path(__file__).resolve().parent.parent / "sdl_flow_optimiser" / "findings"
 
-STORE_PRESENT = len(find_files()) == 4  # the omp session store lives on this machine
+
+def _store_present() -> bool:
+    """True when the omp session store is present; a fresh clone/CI without
+    it must skip the store-guarded tests, not crash at collection."""
+    try:
+        return len(find_files()) == 4
+    except FileNotFoundError:
+        return False
+
+
+STORE_PRESENT = _store_present()  # fresh clone / CI: store absent — skip, don't crash collection
 
 
 def _load():
@@ -83,21 +95,20 @@ def test_confirm_is_numbered_and_replyable():
 
 
 @pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
-def test_confirm_generates_on_demand():
-    path = HERE.parent.parent / "analysis" / "findings" / "s1-confirm.md"
-    before = path.read_text(encoding="utf-8") if path.exists() else ""
-    assert confirm() == 0
-    after = path.read_text(encoding="utf-8")
-    assert after == before or "# S1 confirmation" in after
-    assert "## Disagreements" in after
+def test_confirm_output_matches_committed(tmp_path):
+    """Regenerating the confirmation list must exactly reproduce the
+    committed artifact — drift fails the test instead of silently rewriting
+    the repo tree (derived data is regenerated, never hand-edited)."""
+    out = tmp_path / "confirm.md"
+    assert confirm(out) == 0
+    committed = HERE.parent.parent / "analysis" / "findings" / "s1-confirm.md"
+    assert out.read_text(encoding="utf-8") == committed.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(not STORE_PRESENT, reason="omp session store not available")
 def test_session_openings_are_recognizable():
     """Every sample session gets a repo, an opening user message, and a tool
     mix — the recognition anchor for adjudicating samples on a phone."""
-    from sdl_flow_optimiser.findings.attribution_feasibility import session_openings
-
     openings = session_openings()
     assert len(openings) == 4
     for o in openings:
@@ -107,8 +118,6 @@ def test_session_openings_are_recognizable():
 
 
 def test_apply_labels_folds_disagreements_into_ground_truth(tmp_path):
-    from sdl_flow_optimiser.findings.attribution_feasibility import apply_labels
-
     gt_path = tmp_path / "gt.json"
     labels_path = tmp_path / "labels.json"
     gt_path.write_text(json.dumps({"a": 6, "b": 6}) + "\n", encoding="utf-8")

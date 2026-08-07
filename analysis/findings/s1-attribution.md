@@ -85,8 +85,8 @@ MUST be frozen; noted in `attribution_feasibility.py`.
   more samples), and the review-bottleneck metric until pr_review recall
   clears ~85% (currently 81%).
 - **Label validation in flight:** the confirmation list
-  (`analysis/findings/s1-confirm.md`, phone-formatted) lists all 25
-  classifier-vs-label disagreements plus 40 agreed-low-confidence samples
+  (`analysis/findings/s1-confirm.md`, phone-formatted) lists all 18
+  classifier-vs-label disagreements plus 29 agreed-low-confidence samples
   for Ashby to adjudicate; corrections update `s1_ground_truth.json` and
   this finding's numbers.
 
