@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S1 labeler</title>
+<style>
+  :root { --bg:#111; --card:#1c1c1e; --fg:#eee; --dim:#999; --acc:#4da3ff; --ok:#3fb950; --bad:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui,sans-serif; }
+  header { padding:12px 14px; display:flex; gap:12px; align-items:baseline; border-bottom:1px solid #333; }
+  header h1 { font-size:18px; margin:0; }
+  nav button { background:none; border:none; color:var(--dim); font-size:15px; padding:6px 10px; }
+  nav button.active { color:var(--fg); border-bottom:2px solid var(--acc); }
+  main { max-width:640px; margin:0 auto; padding:12px; padding-bottom:130px; }
+  .bar { color:var(--dim); font-size:13px; margin-bottom:10px; }
+  .session { padding:10px 0; border-bottom:1px solid #2a2a2e; }
+  .session .s-title { font-weight:600; }
+  .session .s-meta { font-size:12px; color:var(--dim); }
+  .assoc { margin-top:14px; }
+  .assoc ul { list-style:none; padding:0; }
+  .assoc li { padding:6px 0; color:var(--dim); font-size:14px; }
+  .selected { outline:2px solid var(--acc) !important; }
+  #selectbar { position:fixed; bottom:0; left:0; right:0; background:#222; border-top:1px solid #444;
+    padding:10px 14px; display:flex; gap:10px; align-items:center; z-index:9; }
+  #sessbar { position:fixed; bottom:0; left:0; right:0; background:#222; border-top:1px solid #444;
+    padding:10px 14px; display:flex; gap:8px; align-items:center; z-index:8; }
+  #sessbar button { flex:1; padding:12px; border-radius:10px; border:1px solid #444; background:#2a2a2e; color:var(--fg); font-size:15px; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  .chips button { padding:5px 10px; border-radius:999px; border:1px solid #444; background:#222; color:var(--fg); font-size:13px; }
+  #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#2a2a2e; border:1px solid #4da3ff; color:var(--fg); padding:12px 16px; border-radius:10px; display:none; gap:12px; align-items:center; font-size:15px; max-width:90%; z-index:10; }
+  #toast button { background:var(--acc); color:#000; border:none; border-radius:8px; padding:8px 12px; font-weight:600; }
+  .shead { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+  .shead button { background:#222; color:var(--fg); border:1px solid #444; border-radius:8px; padding:8px 12px; font-size:15px; }
+  .shead .s-title { font-size:17px; font-weight:700; }
+
+  /* chat — the family-history-album look: user right, agent left */
+  .chat { display:flex; flex-direction:column; gap:8px; }
+  .bubble { max-width:86%; border-radius:14px; padding:10px 12px; font-size:15px; }
+  .bubble.you { align-self:flex-end; background:#1d3a5f; border:1px solid #2c5580; }
+  .bubble.agent { align-self:flex-start; background:#26262a; border:1px solid #3a3a3e; }
+  .bubble-who { font-size:12px; font-weight:700; color:var(--dim); margin-bottom:4px; }
+  .bubble .expand { color:var(--acc); cursor:pointer; }
+  .bubble.expanded { max-height:60vh; overflow-y:auto; }
+  .bubble .collapsebar { position:sticky; top:0; z-index:1; display:flex; justify-content:flex-end;
+    padding-bottom:4px; margin-bottom:4px; background:inherit; }
+  .bubble .collapsebar button { background:none; border:1px solid #444; color:var(--fg);
+    border-radius:8px; padding:6px 10px; font-size:13px; }
+
+  /* activity runs — the unit the user judges */
+  .run { align-self:stretch; background:#141417; border:1px solid #2c2c30; border-radius:12px; padding:10px 12px; margin:4px 0; }
+  .run .r-head { font-size:13px; color:var(--dim); margin-bottom:6px; }
+  .run .r-head .r-user { color:var(--fg); font-size:14px; margin-bottom:4px; }
+  .run .r-head b { color:var(--fg); }
+  .run .r-pick { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; }
+  .run .r-pick button { padding:8px 10px; border-radius:8px; border:1px solid #444; background:#222; color:var(--fg); font-size:14px; }
+  .run .r-pick button.sel { background:var(--acc); color:#000; border-color:var(--acc); }
+  .run .r-pick button.guess { border-style:dashed; }
+  .run .r-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .run .r-actions button { padding:10px 14px; border-radius:8px; border:none; font-size:15px; font-weight:600; }
+  .run .r-ok { background:var(--ok); color:#000; }
+  .run .r-comment { flex:1; min-width:120px; padding:8px; border-radius:8px; border:1px solid #444; background:#222; color:var(--fg); font-size:14px; }
+  .run .r-verdict { font-size:13px; color:var(--ok); margin-top:6px; }
+  .run .r-calls { margin-top:8px; border-top:1px solid #2c2c30; padding-top:6px; font-size:13px; color:var(--dim); }
+  .run .r-calls div { padding:2px 0; }
+  .run .r-calls .more { background:none; border:none; color:var(--acc); font-size:13px; padding:4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>S1 labeler <span id="ver" style="font-size:12px;color:#888"></span></h1>
+  <nav>
+    <button id="tab-sessions" class="active">Sessions</button>
+  </nav>
+</header>
+<main>
+  <section id="pane-sessions">
+    <div class="bar">Tap a session to open it as a chat. Pick two sessions that are the same piece of work, then Associate.</div>
+    <div id="sessions"></div>
+    <div id="selectbar" style="display:none">
+      <span id="selectcount"></span>
+      <button id="associate-cancel" class="cancel">Clear</button>
+      <button id="associate">Associate</button>
+    </div>
+    <div id="sessbar" style="display:none">
+      <button id="sess-top">Top</button>
+      <button id="sess-more">Show more</button>
+      <button id="sess-end">Jump to end</button>
+    </div>
+    <div class="assoc">
+      <div id="assoc-list"></div>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>

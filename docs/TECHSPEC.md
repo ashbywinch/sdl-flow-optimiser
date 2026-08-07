@@ -25,6 +25,9 @@ flowchart LR
     P --> EM[emit]
     EM --> A1[analysis/latest/metrics.json]
     EM --> A2[analysis/latest/report.md]
+    IV -->|samples · context| LB[labeler]
+    LB -->|labels · associations| LBJSON[s1_labels.json · s1_associations.json]
+    F -. transcript context .-> LB
 ```
 
 ### Physical architecture
@@ -40,6 +43,13 @@ flowchart LR
 - Artifacts (`analysis/latest/*`) are serialized views of the latest
   `AnalysisRun` — the DB is the source of truth; artifacts are for the omp
   chat loop (PRD scope item 6).
+- **Labeler** — a local FastAPI web app (`make web`, port 8010, no auth):
+  serves adjudicable samples (random / low-confidence / disagreements) with
+  the surrounding transcript context from the store, records the user's
+  agree/disagree + corrected phase + comment to `s1_labels.json`, and
+  associates same-work sessions via `s1_associations.json`. JSON files are
+  committed evidence (like the ground truth), not DB rows — adjudication
+  precedes the DB stages. Static frontend, no build step, phone-usable.
 
 ### Data flow
 
@@ -66,17 +76,18 @@ flowchart LR
 |---|---|---|
 | Language | Python 3.12 | — |
 | ORM | SQLAlchemy 2.x | raw SQL: loses model↔class mapping the user required; hand-rolled migration pain |
-| Store | Postgres 16 + pgvector | SQLite: no vector storage — user chose Postgres specifically for pgvector; DuckDB: analytic speed but no vector story, heavier dep |
+| Store | Postgres 16 + pgvector | SQLite: no vector support, so the "semantic similarity search" PRD requirement (ambiguous research reads, plan→execute linkage) would force a later migration; DuckDB: analytic speed but no vector story, heavier dep |
 | Schema migrations | Alembic | raw SQL migrations: no rollback/versioning discipline |
 | Testing | pytest | — |
 | Lint/format | ruff | — |
 | Entry point | Makefile | one dev entry point per house scaffold convention |
 | Embeddings | pgvector + a small local embedding model (e.g. sentence-transformers) | hosted APIs: PRD says nothing leaves the machine |
 
-Rationale: PRD constraint "local Postgres, pgvector" + "boring standard
-tooling (Makefile + Python + SQLAlchemy)" + "model objects correspond to
-classes" → SQLAlchemy models are the contract between layers; stages never
-hand-roll SQL.
+Rationale: PRD requirements "local durable store" + "semantic similarity
+search" (which SQLite cannot serve without a later migration) + "boring
+standard tooling (Makefile + Python + SQLAlchemy)" + "model objects
+correspond to classes" → SQLAlchemy models are the contract between layers;
+stages never hand-roll SQL.
 
 ## Spikes required to confirm
 
@@ -104,6 +115,15 @@ Locked by the PRD; each must prove its claim before dependent metrics ship.
   `PR`, `AnalysisRun`, `Metric`, `PhaseSequence`, `Bottleneck`,
   `Recommendation`, `CandidateLever`, `Finding`). Derived-layer tables are
   classes too, not schema sketches.
+- **Labeler/findings objects are part of the model too.** The verification
+  surface introduces its own domain objects, held in the `findings/`
+  layer (evidence) and consumed by the labeler: `Transcript` (the session
+  read as a conversation), `Run` (a same-phase stretch of tool calls — the
+  unit the user adjudicates), `Label` (one adjudication), `Association` (a
+  session pair that is one piece of work), `RunVerdict` (the user's phase
+  for a run), and `Labels` (the append-only JSONL store of labels,
+  associations, and run verdicts, with tombstones). These are part of the
+  object model; a new one is a model change, not a free refactor.
 - **All outputs live in the DB.** Metrics, recommendations, findings are
   persisted rows per `AnalysisRun` — the DB is the record of every pipeline
   decision (PRD: "DB is the record, not just normalized logs"). `emit` is a

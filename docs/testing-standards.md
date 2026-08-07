@@ -25,6 +25,21 @@ makes it pass (`rule://test-first`). For LLM behaviour, write evals instead
 - A test that cannot fail on a plausible bug is not a test (no tautological
   fixtures — validate real artifacts).
 
+## Never skip tests for a missing environment
+
+A test that needs an external dependency — a store, a service, an API key,
+a database — never skips when the dependency is absent. Fake it: a fixture
+builds a minimal stand-in (a tmp store with synthetic data, a stub server,
+recorded responses) so the test runs identically everywhere, CI included.
+`@pytest.mark.skipif` on environment presence is forbidden: a skipped test
+rots silently and the coverage gate lies about what is exercised.
+
+Only the E2E suite may skip — a real external API is the one dependency
+that cannot be faked faithfully (`@pytest.mark.e2e`, skipped by default;
+see Organisation). Everything else fakes, with the fake injected per the
+Mocking section (parameter injection first — never `monkeypatch` a module
+constant to point at a tmp dir; make the dependency a parameter).
+
 ## Organisation
 
 - **Unit tests:** one function/module in isolation, no API calls.
