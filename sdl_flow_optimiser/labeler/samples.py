@@ -9,18 +9,14 @@ phase is inherited, not judged.
 
 from __future__ import annotations
 
-import json
 import random
 from collections import defaultdict
-from dataclasses import asdict
-from pathlib import Path
+from dataclasses import asdict, dataclass
 from typing import Any, TypedDict
 
-from sdl_flow_optimiser.findings.attribution_feasibility import load_ground_truth, sample_execs
+from sdl_flow_optimiser.findings.attribution_feasibility import DumpRow, dump_rows, load_ground_truth, sample_execs
 from sdl_flow_optimiser.findings.labels import Labels
 from sdl_flow_optimiser.phase_attribution import classify_with_context
-
-DUMP_PATH = Path(__file__).resolve().parent.parent / "findings" / "s1_dump.jsonl"
 
 LOW_CONFIDENCE_CUTOFF = 0.5
 
@@ -39,8 +35,15 @@ class Sample(TypedDict):
     label: dict[str, Any] | None
 
 
-def _dump_rows() -> list[dict[str, str]]:
-    return [json.loads(line) for line in DUMP_PATH.read_text(encoding="utf-8").splitlines()]
+@dataclass(frozen=True)
+class SampleCounts:
+    """The adjudication buckets: how many samples need eyes, and how many
+    already have the analyst's label."""
+
+    total: int
+    lowconf: int
+    disagreements: int
+    labeled: int
 
 
 def build_samples() -> list[Sample]:
@@ -48,62 +51,82 @@ def build_samples() -> list[Sample]:
     context-aware classification. Deterministic: committed files only."""
     ground_truth = load_ground_truth()
     labels = Labels().latest_labels_map()
-    by_session: dict[str, list[dict[str, str]]] = defaultdict(list)
-    for row in _dump_rows():
-        by_session[row["label"]].append(row)
+    by_session: dict[str, list[DumpRow]] = defaultdict(list)
+    for row in dump_rows():
+        by_session[row.label].append(row)
     samples: list[Sample] = []
     for execs in by_session.values():
         sampled = sample_execs(execs)
-        for ex, (pred, delegation) in zip(sampled, classify_with_context(sampled), strict=True):
-            truth = ground_truth.get(ex["call_id"])
+        for ex, classified in zip(sampled, classify_with_context(sampled), strict=True):
+            truth = ground_truth.get(ex.call_id)
             if truth is None:
                 continue
             samples.append(
                 {
-                    "call_id": ex["call_id"],
-                    "session": ex["label"],
-                    "session_id": ex["session"],
-                    "tool": ex["tool"],
-                    "intent": ex["intent"],
-                    "args": ex["args"],
-                    "pred_phase": pred.phase_id,
-                    "confidence": round(pred.confidence, 2),
-                    "delegation": delegation,
+                    "call_id": ex.call_id,
+                    "session": ex.label,
+                    "session_id": ex.session,
+                    "tool": ex.tool,
+                    "intent": ex.intent,
+                    "args": ex.args,
+                    "pred_phase": classified.prediction.phase_id,
+                    "confidence": round(classified.prediction.confidence, 2),
+                    "delegation": classified.delegation,
                     "truth_phase": truth,
-                    "label": asdict(labels[ex["call_id"]]) if ex["call_id"] in labels else None,
+                    "label": asdict(labels[ex.call_id]) if ex.call_id in labels else None,
                 }
             )
     return samples
 
 
+@dataclass(frozen=True)
+class SamplePartition:
+    """All samples split by adjudication need."""
+
+    adjudicable: list[Sample]
+    lowconf: list[Sample]
+    disagreements: list[Sample]
+
+
+def _partition(all_samples: list[Sample]) -> SamplePartition:
+    adjudicable = [s for s in all_samples if not s["delegation"]]
+    lowconf = [s for s in adjudicable if s["confidence"] < LOW_CONFIDENCE_CUTOFF]
+    disagreements = [s for s in adjudicable if s["truth_phase"] != s["pred_phase"]]
+    return SamplePartition(adjudicable=adjudicable, lowconf=lowconf, disagreements=disagreements)
+
+
+def _pool_for(kind: str, all_samples: list[Sample]) -> list[Sample]:
+    """The sample pool for a sampling kind. random excludes delegation;
+    lowconf and disagreements are the adjudication buckets; all is raw."""
+    if kind == "all":
+        return all_samples
+    partition = _partition(all_samples)
+    if kind == "lowconf":
+        return partition.lowconf
+    if kind == "disagreements":
+        return partition.disagreements
+    if kind == "random":
+        return partition.adjudicable
+    raise ValueError(f"unknown sampling kind: {kind}")
+
+
 def select_samples(kind: str, n: int, seed: int | None = None) -> list[Sample]:
     """Pick n samples of the given kind. random is seeded for reproducibility
     when a seed is given (tests); the web UI leaves it unseeded."""
-    all_samples = build_samples()
-    if kind == "all":
-        pool = all_samples
-    elif kind == "lowconf":
-        pool = [s for s in all_samples if not s["delegation"] and s["confidence"] < LOW_CONFIDENCE_CUTOFF]
-    elif kind == "disagreements":
-        pool = [s for s in all_samples if not s["delegation"] and s["truth_phase"] != s["pred_phase"]]
-    elif kind == "random":
-        pool = [s for s in all_samples if not s["delegation"]]
-    else:
-        raise ValueError(f"unknown sampling kind: {kind}")
+    pool = _pool_for(kind, build_samples())
     if seed is not None:
         rng = random.Random(seed)
         return rng.sample(pool, min(n, len(pool)))
     return random.sample(pool, min(n, len(pool)))
 
 
-def sample_counts() -> dict[str, int]:
+def sample_counts() -> SampleCounts:
     all_samples = build_samples()
-    adjudicable = [s for s in all_samples if not s["delegation"]]
-    lowconf = [s for s in adjudicable if s["confidence"] < LOW_CONFIDENCE_CUTOFF]
-    disagreements = [s for s in adjudicable if s["truth_phase"] != s["pred_phase"]]
-    return {
-        "total": len(adjudicable),
-        "lowconf": len(lowconf),
-        "disagreements": len(disagreements),
-        "labeled": sum(1 for s in all_samples if s["label"]),
-    }
+    partition = _partition(all_samples)
+    labeled = sum(1 for s in all_samples if s["label"])
+    return SampleCounts(
+        total=len(partition.adjudicable),
+        lowconf=len(partition.lowconf),
+        disagreements=len(partition.disagreements),
+        labeled=labeled,
+    )

@@ -4,6 +4,7 @@
 
 PYTHON := .venv/bin/python
 RUFF := .venv/bin/ruff
+XENON := .venv/bin/xenon
 BASEDPYRIGHT := .venv/bin/basedpyright
 PG_CONTAINER := sdl-flow-optimiser-pg
 
@@ -37,6 +38,7 @@ run: setup
 
 lint: setup
 	@$(RUFF) check sdl_flow_optimiser/ tests/
+	@$(XENON) --max-absolute B --max-modules A --max-average A sdl_flow_optimiser/
 
 lint-github: setup   # CI only: findings surface as PR annotations
 	@$(RUFF) check sdl_flow_optimiser/ tests/ --output-format=github

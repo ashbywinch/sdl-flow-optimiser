@@ -10,3 +10,11 @@ repos:
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
     hooks: [id: gitleaks]
+  - repo: local
+    hooks:
+      - id: xenon
+        name: xenon (cyclomatic complexity)
+        entry: xenon --max-absolute B --max-modules A --max-average A sdl_flow_optimiser/
+        language: python
+        additional_dependencies: [xenon]
+        pass_filenames: false

@@ -21,6 +21,7 @@ dev = [
     "basedpyright>=1.39.0",
     "archunitpython>=0.2.0",
     "httpx>=0.27",
+    "xenon>=0.9.3",
 ]
 
 [build-system]

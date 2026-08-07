@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from sdl_flow_optimiser.findings.attribution_feasibility import find_files
 from sdl_flow_optimiser.findings.labels import Label, Labels
-from sdl_flow_optimiser.findings.transcript import extract_transcript
+from sdl_flow_optimiser.findings.transcript import Transcript
 from sdl_flow_optimiser.labeler.app import _repo_display_name, create_app
 from sdl_flow_optimiser.labeler.samples import build_samples, sample_counts, select_samples
 
@@ -52,9 +52,9 @@ def test_transcript_skips_harness_preamble(tmp_path):
         + "\n",
         encoding="utf-8",
     )
-    items = extract_transcript(f)
-    users = [it for it in items if it["kind"] == "user"]
-    assert [u["text"] for u in users] == ["ok let's make a plan"]
+    items = Transcript.from_session_file(f).items
+    users = [it for it in items if it.kind == "user"]
+    assert [u.text for u in users] == ["ok let's make a plan"]
 
 
 def test_transcript_keeps_long_user_pastes_after_opening(tmp_path):
@@ -77,8 +77,8 @@ def test_transcript_keeps_long_user_pastes_after_opening(tmp_path):
         + "\n",
         encoding="utf-8",
     )
-    items = extract_transcript(f)
-    assert sum(1 for it in items if it["kind"] == "user") == 2
+    items = Transcript.from_session_file(f).items
+    assert sum(1 for it in items if it.kind == "user") == 2
 
 
 def test_repo_display_name():
@@ -155,10 +155,10 @@ def test_sample_counts_are_consistent():
     lowconf = [s for s in adjudicable if s["confidence"] < 0.5]
     disagreements = [s for s in adjudicable if s["truth_phase"] != s["pred_phase"]]
     counts = sample_counts()
-    assert counts["total"] == len(adjudicable)
-    assert counts["lowconf"] == len(lowconf)
-    assert counts["disagreements"] == len(disagreements)
-    assert counts["labeled"] == sum(1 for s in samples if s["label"])
+    assert counts.total == len(adjudicable)
+    assert counts.lowconf == len(lowconf)
+    assert counts.disagreements == len(disagreements)
+    assert counts.labeled == sum(1 for s in samples if s["label"])
 
 
 def _client(tmp_path):

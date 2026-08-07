@@ -112,9 +112,9 @@ def test_session_openings_are_recognizable():
     openings = session_openings()
     assert len(openings) == 4
     for o in openings:
-        assert o["repo"]
-        assert o["user"], f"{o['label']} has no opening user message"
-        assert o["hist"], f"{o['label']} has no tool mix"
+        assert o.repo
+        assert o.user, f"{o.label} has no opening user message"
+        assert o.hist, f"{o.label} has no tool mix"
 
 
 def test_apply_labels_folds_disagreements_into_ground_truth(tmp_path):
@@ -140,23 +140,30 @@ def test_apply_labels_folds_disagreements_into_ground_truth(tmp_path):
 def test_delegation_inherits_parent_phase():
     """A task spawn between execute events takes execute; a scout check in a
     prd research run takes prd — the event's own signature is irrelevant."""
-    execs = [
-        {"tool": "read", "intent": "read example skill format", "args": "{}", "call_id": "a"},
-        {"tool": "task", "intent": "", "args": "{}", "call_id": "b"},  # delegation
-        {"tool": "edit", "intent": "Fix the import", "args": "{}", "call_id": "c"},
-    ]
-    preds = classify_with_context(execs)
-    assert preds[1][1] is True  # marked delegation
-    assert preds[1][0].rule == "delegation-context"
+    from sdl_flow_optimiser.phase_attribution import Execution
+
+    def execs(*rows):
+        return [Execution(call_id=r[3], tool=r[0], intent=r[1], args=r[2]) for r in rows]
+
+    preds = classify_with_context(
+        execs(
+            ("read", "read example skill format", "{}", "a"),
+            ("task", "", "{}", "b"),  # delegation
+            ("edit", "Fix the import", "{}", "c"),
+        )
+    )
+    assert preds[1].delegation is True  # marked delegation
+    assert preds[1].prediction.rule == "delegation-context"
     # the surrounding research run ("read example skill format" at session
     # start) is prd — the task inherits it, not execute
-    assert preds[1][0].phase_id == 1
+    assert preds[1].prediction.phase_id == 1
 
-    execs2 = [
-        {"tool": "read", "intent": "read example skill format", "args": "{}", "call_id": "a"},
-        {"tool": "hub", "intent": "check scout jobs status", "args": "{}", "call_id": "b"},
-        {"tool": "read", "intent": "read houses Makefile", "args": "{}", "call_id": "c"},
-    ]
-    preds2 = classify_with_context(execs2)
-    assert preds2[1][1] is True
-    assert preds2[1][0].phase_id == 1  # research run at session start is prd
+    preds2 = classify_with_context(
+        execs(
+            ("read", "read example skill format", "{}", "a"),
+            ("hub", "check scout jobs status", "{}", "b"),
+            ("read", "read houses Makefile", "{}", "c"),
+        )
+    )
+    assert preds2[1].delegation is True
+    assert preds2[1].prediction.phase_id == 1  # research run at session start is prd

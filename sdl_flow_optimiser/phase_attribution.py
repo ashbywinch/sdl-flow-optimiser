@@ -77,6 +77,27 @@ class PhasePrediction:
     rule: str
 
 
+@dataclass(frozen=True)
+class Execution:
+    """One tool execution — the unit of attribution: what ran, why (the
+    agent's intent string), with what args, and the preceding user message."""
+
+    call_id: str
+    tool: str
+    intent: str
+    args: str
+    prev_user: str = ""
+
+
+@dataclass(frozen=True)
+class ClassifiedExecution:
+    """One execution's attribution: the phase prediction and whether it is
+    a delegation event (subtask coordination — not phase-bearing itself)."""
+
+    prediction: PhasePrediction
+    delegation: bool
+
+
 def is_delegation(tool: str, intent: str) -> bool:
     """True for subtask orchestration: a `task` spawn or hub coordination.
 
@@ -90,30 +111,27 @@ def is_delegation(tool: str, intent: str) -> bool:
     return tool == "hub" and _DELEGATION_HUB.search(intent.lower()) is not None
 
 
-def assign_phase(tool: str, intent: str, args: str, position_ratio: float | None = None) -> PhasePrediction:
-    """Attribute one tool execution to a phase.
-
-    `blob` combines tool name, intent, and args — all lowercase. `position_ratio`
-    (0.0–1.0 within the session) is optional context: research at the very start
-    of a session is requirements work, not execution.
-    """
-    blob = " ".join([tool, intent, args]).lower()
-    for phase, pattern, confidence in _RULES:
-        if pattern.search(blob):
-            return PhasePrediction(phase, confidence, f"rule:{phase}")
+def _research_phase(tool: str, intent: str, args: str, position_ratio: float | None) -> PhasePrediction:
+    """Research reads: requirements at session start, design research, or
+    keyword-signaled requirements — else plain execution."""
     intent_args = " ".join([intent, args]).lower()
-    if tool in _RESEARCH_TOOLS:
-        if (
-            position_ratio is not None
-            and position_ratio < 0.35
-            and (_RESEARCH_KEYWORDS.search(intent) or _CONFIG_PATTERN.search(intent_args))
-        ):
-            return PhasePrediction(1, 0.6, "research-start")
-        if tool in ("read", "web_search") and _DESIGN_KEYWORDS.search(intent_args):
-            return PhasePrediction(2, 0.6, "design-research")
-        if _RESEARCH_KEYWORDS.search(intent):
-            return PhasePrediction(1, 0.5, "research-keyword")
-        return PhasePrediction(6, 0.35, "fallback-research")
+    if (
+        position_ratio is not None
+        and position_ratio < 0.35
+        and (_RESEARCH_KEYWORDS.search(intent) or _CONFIG_PATTERN.search(intent_args))
+    ):
+        return PhasePrediction(1, 0.6, "research-start")
+    if tool in ("read", "web_search") and _DESIGN_KEYWORDS.search(intent_args):
+        return PhasePrediction(2, 0.6, "design-research")
+    if _RESEARCH_KEYWORDS.search(intent):
+        return PhasePrediction(1, 0.5, "research-keyword")
+    return PhasePrediction(6, 0.35, "fallback-research")
+
+
+def _execution_phase(tool: str, intent: str, position_ratio: float | None) -> PhasePrediction:
+    """Non-research activity: survey bash at session start is requirements,
+    edit/write/ast_edit/lsp/eval/debug are execution, everything else
+    falls back to execution with low confidence."""
     if tool == "bash" and position_ratio is not None and position_ratio < 0.25 and _SURVEY_KEYWORDS.search(intent):
         return PhasePrediction(1, 0.55, "survey-start")
     if tool in _EXECUTE_TOOLS:
@@ -125,16 +143,32 @@ def assign_phase(tool: str, intent: str, args: str, position_ratio: float | None
     return PhasePrediction(6, 0.3, "fallback")
 
 
-def _nearest_phase(preds: list[tuple[PhasePrediction, bool]], i: int) -> int | None:
+def assign_phase(tool: str, intent: str, args: str, position_ratio: float | None = None) -> PhasePrediction:
+    """Attribute one tool execution to a phase.
+
+    `blob` combines tool name, intent, and args — all lowercase. `position_ratio`
+    (0.0–1.0 within the session) is optional context: research at the very start
+    of a session is requirements work, not execution.
+    """
+    blob = " ".join([tool, intent, args]).lower()
+    for phase, pattern, confidence in _RULES:
+        if pattern.search(blob):
+            return PhasePrediction(phase, confidence, f"rule:{phase}")
+    if tool in _RESEARCH_TOOLS:
+        return _research_phase(tool, intent, args, position_ratio)
+    return _execution_phase(tool, intent, position_ratio)
+
+
+def _nearest_phase(preds: list[ClassifiedExecution], i: int) -> int | None:
     """Phase of the nearest non-delegation event — the parent context."""
     for dist in range(1, len(preds)):
         for j in (i - dist, i + dist):
-            if 0 <= j < len(preds) and not preds[j][1]:
-                return preds[j][0].phase_id
+            if 0 <= j < len(preds) and not preds[j].delegation:
+                return preds[j].prediction.phase_id
     return None
 
 
-def classify_with_context(execs: list[dict[str, str]]) -> list[tuple[PhasePrediction, bool]]:
+def classify_with_context[T: Execution](execs: list[T]) -> list[ClassifiedExecution]:
     """Per-event attribution with delegation inheritance.
 
     Delegation events (task spawns, hub subagent coordination) are not
@@ -142,15 +176,18 @@ def classify_with_context(execs: list[dict[str, str]]) -> list[tuple[PhasePredic
     event takes the phase of the nearest non-delegation activity.
     """
     n = len(execs)
-    preds: list[tuple[PhasePrediction, bool]] = []
+    preds: list[ClassifiedExecution] = []
     for pos, ex in enumerate(execs):
-        delegation = is_delegation(ex["tool"], ex["intent"])
+        delegation = is_delegation(ex.tool, ex.intent)
         position_ratio = pos / max(n - 1, 1)
-        pred = assign_phase(ex["tool"], ex["intent"], ex["args"], position_ratio)
-        preds.append((pred, delegation))
-    for i, (_pred, delegation) in enumerate(preds):
-        if delegation:
+        pred = assign_phase(ex.tool, ex.intent, ex.args, position_ratio)
+        preds.append(ClassifiedExecution(prediction=pred, delegation=delegation))
+    for i, classified in enumerate(preds):
+        if classified.delegation:
             inherited = _nearest_phase(preds, i)
             if inherited is not None:
-                preds[i] = (PhasePrediction(inherited, 0.5, "delegation-context"), True)
+                preds[i] = ClassifiedExecution(
+                    prediction=PhasePrediction(inherited, 0.5, "delegation-context"),
+                    delegation=True,
+                )
     return preds
