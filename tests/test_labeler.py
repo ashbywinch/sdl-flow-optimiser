@@ -6,6 +6,7 @@ fixture (tests must run identically everywhere — see testing-standards).
 """
 
 import json
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi.testclient import TestClient
@@ -16,10 +17,10 @@ from sdl_flow_optimiser.labeler.app import _repo_display_name, create_app
 from sdl_flow_optimiser.labeler.samples import build_samples, sample_counts, select_samples
 
 
-def test_transcript_skips_harness_preamble(tmp_path):
+def test_transcript_skips_harness_preamble(fs):
     """The opening user message, when it is a huge machine-generated prompt,
     is dropped; the user's real short opening is the first user item."""
-    f = tmp_path / "s.jsonl"
+    f = Path("/s.jsonl")
     f.write_text(
         "\n".join(
             [
@@ -45,9 +46,9 @@ def test_transcript_skips_harness_preamble(tmp_path):
     assert [u.text for u in users] == ["ok let's make a plan"]
 
 
-def test_transcript_keeps_long_user_pastes_after_opening(tmp_path):
+def test_transcript_keeps_long_user_pastes_after_opening(fs):
     """A long user message AFTER the opening is real content (a paste), kept."""
-    f = tmp_path / "s.jsonl"
+    f = Path("/s.jsonl")
     f.write_text(
         "\n".join(
             [
@@ -69,10 +70,10 @@ def test_transcript_keeps_long_user_pastes_after_opening(tmp_path):
     assert sum(1 for it in items if it.kind == "user") == 2
 
 
-def test_transcript_phases_are_user_delimited_and_merged(tmp_path):
+def test_transcript_phases_are_user_delimited_and_merged(fs):
     """A phase runs from one user message to the next — agent replies and
     tool results never split it; adjacent same-phase spans merge."""
-    f = tmp_path / "s.jsonl"
+    f = Path("/s.jsonl")
     f.write_text(
         "\n".join(
             [
@@ -129,8 +130,8 @@ def test_repo_display_name():
     assert _repo_display_name("tmp-tmp-e9671acd244849c57167c658fa2f969752048f7ab184a3dcf5c46cb4d56ae124") == "tmp"
 
 
-def test_association_round_trip_is_sorted_and_removable(tmp_path):
-    path = tmp_path / "assoc.jsonl"
+def test_association_round_trip_is_sorted_and_removable(fs):
+    path = Path("/assoc.jsonl")
     stores = Labels(associations_path=path)
     stores.add_association("b-session", "a-session")
     assoc = stores.associations()
@@ -141,8 +142,8 @@ def test_association_round_trip_is_sorted_and_removable(tmp_path):
     assert stores.associations() == []
 
 
-def test_run_verdict_round_trip_is_append_only(tmp_path):
-    path = tmp_path / "labels.jsonl"
+def test_run_verdict_round_trip_is_append_only(fs):
+    path = Path("/labels.jsonl")
     stores = Labels(labels_path=path)
     verdict = stores.add_run_verdict("sess#3", 6, "execute work")
     assert stores.latest_run_verdict("sess#3") == verdict
@@ -186,15 +187,13 @@ def test_sample_counts_are_consistent():
     )
 
 
-def _client(tmp_path, store_path=None):
+def _client(store_path=None):
     kwargs = {"store_path": store_path} if store_path else {}
-    return TestClient(
-        create_app(labels_path=tmp_path / "labels.jsonl", associations_path=tmp_path / "assoc.jsonl", **kwargs)
-    )
+    return TestClient(create_app(labels_path=Path("/labels.jsonl"), associations_path=Path("/assoc.jsonl"), **kwargs))
 
 
-def test_api_serves_index_and_samples(tmp_path):
-    client = _client(tmp_path)
+def test_api_serves_index_and_samples(fs_with_repo):
+    client = _client()
     assert client.get("/").status_code == 200
     assert client.get("/app.js").status_code == 200
     sets = client.get("/api/sample-sets").json()
@@ -204,8 +203,8 @@ def test_api_serves_index_and_samples(tmp_path):
     assert all(s["truth_phase"] != s["pred_phase"] for s in samples)
 
 
-def test_api_associations(tmp_path):
-    client = _client(tmp_path)
+def test_api_associations(fs):
+    client = _client()
     assert client.post("/api/associations", json={"a": "x", "b": "x"}).status_code == 400
     assert client.post("/api/associations", json={"a": "plan-session", "b": "exec-session"}).status_code == 200
     assoc = client.get("/api/associations").json()
@@ -216,23 +215,23 @@ def test_api_associations(tmp_path):
     assert client.get("/api/associations").json() == []
 
 
-def test_api_verdicts_fold_into_ground_truth(tmp_path, fake_store):
+def test_api_verdicts_fold_into_ground_truth(fake_store):
     from sdl_flow_optimiser.findings.attribution_feasibility import find_files
 
-    client = _client(tmp_path, fake_store)
+    client = _client(fake_store)
     first_session = find_files(fake_store)[0].path
     phase_id = Transcript.from_session_file(first_session).runs()[0].run_id
     encoded = quote(phase_id, safe="")  # run_ids carry a # — must be URL-encoded
     res = client.post(f"/api/runs/{encoded}/verdict", json={"phase": 5, "comment": "planning"})
     assert res.status_code == 200
-    verdict = Labels(labels_path=tmp_path / "labels.jsonl").latest_run_verdict(phase_id)
+    verdict = Labels(labels_path=Path("/labels.jsonl")).latest_run_verdict(phase_id)
     assert verdict is not None and verdict.phase == 5
     assert client.delete(f"/api/runs/{encoded}/verdict").status_code == 200
-    assert Labels(labels_path=tmp_path / "labels.jsonl").latest_run_verdict(phase_id) is None
+    assert Labels(labels_path=Path("/labels.jsonl")).latest_run_verdict(phase_id) is None
 
 
-def test_api_context_shows_a_phase(fake_store, tmp_path):
-    client = _client(tmp_path, fake_store)
+def test_api_context_shows_a_phase(fake_store):
+    client = _client(fake_store)
     sample = client.get("/api/samples?kind=random&n=1&seed=3").json()[0]
     body = client.get(f"/api/samples/{quote(sample['phase_id'], safe='')}/context").json()
     assert body["user"]  # the human's opening words
@@ -246,17 +245,17 @@ def test_samples_carry_session_id():
     assert sample["session_id"].endswith(".jsonl")
 
 
-def test_api_rejects_path_traversal_session_id(fake_store, tmp_path):
+def test_api_rejects_path_traversal_session_id(fake_store):
     """A crafted session_id must not read files outside the store — the
     labeler is LAN-reachable with no auth (PRD trust decision), so the
     containment check is the boundary."""
-    client = _client(tmp_path, fake_store)
+    client = _client(fake_store)
     for evil in ("..%2F..%2F..%2F..%2F..%2Fetc%2Fhostname", "%2e%2e%2f%2e%2e%2fetc%2fpasswd", "..%2F..%2Fsecret.jsonl"):
         assert client.get(f"/api/sessions/{evil}").status_code == 404
 
 
-def test_api_session_detail_returns_readable_transcript(fake_store, tmp_path):
-    client = _client(tmp_path, fake_store)
+def test_api_session_detail_returns_readable_transcript(fake_store):
+    client = _client(fake_store)
     sample = client.get("/api/samples?kind=random&n=1&seed=4").json()[0]
     body = client.get(f"/api/sessions/{sample['session_id']}").json()
     kinds = [it["kind"] for it in body["transcript"]]
