@@ -336,6 +336,19 @@ async function refreshAssociations() {
 
 // ---------- session transcript (chunked) ----------
 
+function updateSessionBar() {
+  const bar = document.getElementById("sessbar");
+  if (!state.session) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "flex";
+  const left = state.session.transcript.length - state.rendered;
+  document.getElementById("sess-more").textContent = left > 0 ? `Show more (${left} left)` : "All shown";
+  document.getElementById("sess-more").disabled = left <= 0;
+  document.getElementById("sess-end").textContent = "Jump to end";
+}
+
 function showSession(id) {
   state.sessionIdx = state.sessionsList.findIndex((s) => s.id === id);
   const wrap = document.getElementById("sessions");
@@ -378,38 +391,14 @@ function showSession(id) {
       chips.appendChild(chip);
     }
     wrap.appendChild(chips);
-    wrap.appendChild(renderChunkBar(wrap));
     renderTranscript(wrap);
   });
 }
 
-function renderChunkBar(wrap) {
-  const bar = el("div", "chunkbar");
-  const remaining = () => (state.session ? state.session.transcript.length - state.rendered : 0);
-  const more = el("button", "", "");
-  const moreText = () => `Show more (${remaining()} left)`;
-  more.textContent = moreText();
-  more.onclick = () => {
-    state.rendered += CHUNK;
-    renderTranscript(wrap);
-    more.textContent = moreText();
-  };
-  const end = el("button", "", "Jump to end");
-  end.onclick = () => {
-    state.rendered = state.session.transcript.length;
-    renderTranscript(wrap);
-    wrap.lastElementChild && wrap.lastElementChild.scrollIntoView();
-  };
-  bar.appendChild(more);
-  bar.appendChild(end);
-  return bar;
-}
-
 function renderTranscript(wrap) {
   const detail = state.session;
-  // remove previously rendered items except the header/chips/chunkbar
+  // remove previously rendered items except header/chips
   [...wrap.querySelectorAll(".bubble,.event")].forEach((n) => n.remove());
-  wrap.querySelectorAll(".chunkbar").forEach((n) => n.remove());
   const t = detail.transcript;
   const end = Math.min(state.rendered, t.length);
   for (let i = 0; i < end; i++) {
@@ -448,7 +437,7 @@ function renderTranscript(wrap) {
       wrap.appendChild(row);
     }
   }
-  if (end < t.length) wrap.appendChild(renderChunkBar(wrap));
+  updateSessionBar();
 }
 
 // ---------- boot ----------
@@ -505,6 +494,20 @@ document.getElementById("associate-cancel").onclick = () => {
 document.getElementById("modal-close").onclick = closeOverlay;
 document.getElementById("modal").onclick = (e) => {
   if (e.target.id === "modal") closeOverlay();
+};
+document.getElementById("sess-top").onclick = () => {
+  document.getElementById("sessions").scrollIntoView();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+};
+document.getElementById("sess-more").onclick = () => {
+  state.rendered += CHUNK;
+  renderTranscript(document.getElementById("sessions"));
+};
+document.getElementById("sess-end").onclick = () => {
+  const wrap = document.getElementById("sessions");
+  state.rendered = state.session.transcript.length;
+  renderTranscript(wrap);
+  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 };
 document.getElementById("load").onclick = loadSamples;
 document.getElementById("kind").onchange = () => setTimeout(loadSamples, 150);

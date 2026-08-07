@@ -66,6 +66,9 @@
   .selected { outline:2px solid var(--acc) !important; }
   #selectbar { position:fixed; bottom:0; left:0; right:0; background:#222; border-top:1px solid #444;
     padding:10px 14px; display:flex; gap:10px; align-items:center; z-index:9; }
+  #sessbar { position:fixed; bottom:0; left:0; right:0; background:#222; border-top:1px solid #444;
+    padding:10px 14px; display:flex; gap:8px; align-items:center; z-index:8; }
+  #sessbar button { flex:1; padding:12px; border-radius:10px; border:1px solid #444; background:#2a2a2e; color:var(--fg); font-size:15px; }
   #selectbar span { flex:1; font-size:14px; }
   #selectbar button { padding:10px 16px; border-radius:8px; border:none; background:var(--acc); color:#000; font-weight:600; }
   #selectbar button:disabled { opacity:.4; }
@@ -117,6 +120,11 @@
       <span id="selectcount"></span>
       <button id="associate-cancel" class="cancel">Clear</button>
       <button id="associate">Associate</button>
+    </div>
+    <div id="sessbar" style="display:none">
+      <button id="sess-top">Top</button>
+      <button id="sess-more">Show more</button>
+      <button id="sess-end">Jump to end</button>
     </div>
     <div class="assoc">
       <button id="associate" disabled style="padding:10px 16px;border-radius:8px;border:none;background:var(--acc);color:#000;font-weight:600">Associate selected</button>
