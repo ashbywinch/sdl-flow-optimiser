@@ -48,6 +48,15 @@ Language-agnostic by design; per-language toolchain conventions (ruff, eslint, f
   and documented, or extract it to a shared module. Circular imports are fixed
   by restructuring modules, never bodged with lazy imports.
 
+### Testability
+
+- **Test fixtures are files, not strings.** Source code a test needs to
+  parse or exercise lives in a real fixture file (e.g. `tests/fixtures/`),
+  never embedded in a string literal. Code-in-string is invisible to the
+  type checker, drifts from the real toolchain, and cannot be linted or
+  run — a parser or classifier test points at a fixture file, it does not
+  carry the source as text.
+
 ### Naming & Types
 
 - **Names communicate intent.** Domain names, not shapes: `monthlyPayment`

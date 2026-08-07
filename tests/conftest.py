@@ -98,7 +98,18 @@ def _build_fake_store(root: Path) -> Path:
     return store
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
 @pytest.fixture
-def fake_store(tmp_path: Path) -> Path:
-    """A tmp session store whose phases match the committed dump."""
-    return _build_fake_store(tmp_path)
+def fs_with_repo(fs) -> None:
+    """The repo tree (static assets, committed evidence) stays readable over
+    the fake filesystem; all writes are in-memory."""
+    fs.add_real_paths([str(REPO_ROOT)])
+
+
+@pytest.fixture
+def fake_store(fs_with_repo) -> Path:
+    """A fake session store whose phases match the committed dump, built in
+    the in-memory filesystem (testing standard: fakefs wherever possible)."""
+    return _build_fake_store(Path("/store"))

@@ -22,6 +22,7 @@ dev = [
     "archunitpython>=0.2.0",
     "httpx>=0.27",
     "xenon>=0.9.3",
+    "pyfakefs>=6.2.0",
 ]
 
 [build-system]

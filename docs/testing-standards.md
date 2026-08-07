@@ -49,6 +49,16 @@ constant to point at a tmp dir; make the dependency a parameter).
 - Shared test infrastructure (fixtures, fakes) is extracted once, not
   copy-pasted per file.
 
+## Fake the filesystem before touching the real one
+
+File I/O in tests uses pyfakefs (`fs` fixture; `fake_filesystem_unittest`
+for unittest suites) wherever possible: in-memory, deterministic, no disk
+churn, no teardown. Reach a real `tmp_path` only when the code under test
+needs real filesystem semantics (subprocess interop, symlinks,
+OS-specific behaviour) — and comment why. Committed artifacts stay
+readable by mounting their paths (`fs.use_real_paths`), never by copying
+or by falling back to the real FS.
+
 ## Mocking and dependency injection
 
 Inject the dependency (service, output path, fake) — never
