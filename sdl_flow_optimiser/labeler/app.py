@@ -35,6 +35,7 @@ from sdl_flow_optimiser.phase_attribution import PHASE_NAMES
 
 STATIC = Path(__file__).parent / "static"
 WINDOW = 5
+NO_CACHE = {"Cache-Control": "no-store"}
 
 
 def create_app(
@@ -42,6 +43,12 @@ def create_app(
     associations_path: Path = ASSOCIATIONS_PATH,
 ) -> FastAPI:
     app = FastAPI(title="sdl-flow-optimiser labeler")
+
+    @app.middleware("http")
+    async def no_cache(request, call_next):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/")
     def index() -> FileResponse:
