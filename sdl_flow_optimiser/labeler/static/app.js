@@ -86,21 +86,32 @@ async function adjudicate(callId, predPhase, agree, phase, comment, after) {
   refreshSets();
 }
 
+function openOverlay(title, text) {
+  const modal = document.getElementById("modal");
+  document.getElementById("modal-title").textContent = title;
+  document.getElementById("modal-body").textContent = text;
+  modal.hidden = false;
+}
+
+function closeOverlay() {
+  document.getElementById("modal").hidden = true;
+}
+
 function textBubble(kind, text) {
-  // Collapse monster texts (pasted prompts, long replies) to a summary line.
+  // Monster texts (pasted prompts, long replies) never expand in the flow —
+  // they stay a compact chip; tap opens a scrollable overlay that leaves
+  // the transcript untouched.
+  const who = kind === "you" ? "You:" : "Agent:";
   const b = el("div", `bubble ${kind}`);
   if (text.length <= COLLAPSE_AT) {
-    b.textContent = `${kind === "you" ? "You:" : "Agent:"} ${text}`;
+    b.textContent = `${who} ${text}`;
     return b;
   }
-  b.textContent = `${kind === "you" ? "You:" : "Agent:"} ${text.slice(0, 120)}…`;
+  b.textContent = `${who} ${text.slice(0, 100)}…`;
   b.classList.add("collapsed");
-  const meta = el("span", "expand", ` (${Math.round(text.length / 1000)}k chars — tap to read)`);
+  const meta = el("span", "expand", ` (${Math.round(text.length / 1000)}k chars — tap to view)`);
   b.appendChild(meta);
-  b.onclick = () => {
-    b.textContent = `${kind === "you" ? "You:" : "Agent:"} ${text}`;
-    b.classList.remove("collapsed");
-  };
+  b.onclick = () => openOverlay(`${who} full message (${Math.round(text.length / 1000)}k chars)`, text);
   return b;
 }
 
@@ -490,6 +501,10 @@ document.getElementById("associate").onclick = async () => {
 document.getElementById("associate-cancel").onclick = () => {
   state.selected = [];
   renderSessions();
+};
+document.getElementById("modal-close").onclick = closeOverlay;
+document.getElementById("modal").onclick = (e) => {
+  if (e.target.id === "modal") closeOverlay();
 };
 document.getElementById("load").onclick = loadSamples;
 document.getElementById("kind").onchange = () => setTimeout(loadSamples, 150);
