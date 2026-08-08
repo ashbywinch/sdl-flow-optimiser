@@ -81,13 +81,20 @@ work.
 
 ## Fake the filesystem before touching the real one
 
-File I/O in tests uses pyfakefs (`fs` fixture; `fake_filesystem_unittest`
-for unittest suites) wherever possible: in-memory, deterministic, no disk
-churn, no teardown. Reach a real `tmp_path` only when the code under test
-needs real filesystem semantics (subprocess interop, symlinks,
-OS-specific behaviour) — and comment why. Committed artifacts stay
-readable by mounting their paths (`fs.use_real_paths`), never by copying
-or by falling back to the real FS.
+File I/O in tests uses pyfakefs wherever possible (add `pyfakefs` to dev
+deps; it bundles the pytest `fs` fixture and the
+`fake_filesystem_unittest` base for unittest suites): in-memory,
+deterministic, no disk churn, no teardown.
+
+- Write to fixed fake paths (`/store`, `/labels.jsonl`) — not pytest's
+  `tmp_path`, which breaks under the fs patch (`Path.relative_to` fails);
+  fake paths need no cleanup anyway.
+- Committed artifacts stay readable by mounting their real directories
+  (`fs.add_real_paths([...])`), never by copying or by falling back to
+  the real FS.
+- Reach a real `tmp_path` only when the code under test needs real
+  filesystem semantics (subprocess interop, symlinks, OS-specific
+  behaviour) — and comment why.
 
 ## Mocking and dependency injection
 

@@ -112,9 +112,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 @pytest.fixture
 def fs_with_repo(fs) -> None:
-    """The repo tree (static assets, committed evidence) stays readable over
-    the fake filesystem; all writes are in-memory."""
-    fs.add_real_paths([str(REPO_ROOT)])
+    """The committed evidence and labeler assets stay readable over the
+    fake filesystem; all writes are in-memory. Only the directories the
+    tests actually read are mounted, so accidental writes stay confined to
+    the fake FS."""
+    fs.add_real_paths(
+        [
+            str(REPO_ROOT / "analysis"),
+            str(REPO_ROOT / "sdl_flow_optimiser"),
+        ]
+    )
 
 
 @pytest.fixture

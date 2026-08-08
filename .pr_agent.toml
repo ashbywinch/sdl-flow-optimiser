@@ -22,6 +22,8 @@ repo_context_files = [
 ]
 
 [pr_reviewer]
+enable_incremental = true
+persistent_comment = true  # update the same review comment instead of posting a new one
 require_tests_review = true
 require_security_review = true
 inline_more_suggestions = true  # Enables inline code comments during /review
