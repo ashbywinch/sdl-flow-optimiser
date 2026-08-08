@@ -63,12 +63,12 @@ def test_confirm_is_numbered_and_replyable():
     assert numbered[0].startswith("  1."), "numbering must start at 1 so corrections can reference it"
 
 
-def test_confirm_output_matches_committed(fake_store, tmp_path):
+def test_confirm_output_matches_committed(fake_store):
     """Regenerating the confirmation list over the fake store must exactly
     reproduce the committed artifact's rows — the phases the fake encodes
     ARE the committed dump, so the adjudication rows are byte-identical
     (derived data is regenerated, never hand-edited)."""
-    out = tmp_path / "confirm.md"
+    out = Path("/confirm.md")
     assert confirm(out, store=fake_store) == 0
     committed = HERE.parent.parent / "analysis" / "findings" / "s1-confirm.md"
 
@@ -78,11 +78,11 @@ def test_confirm_output_matches_committed(fake_store, tmp_path):
     assert rows_section(out.read_text(encoding="utf-8")) == rows_section(committed.read_text(encoding="utf-8"))
 
 
-def test_confirm_is_deterministic(fake_store, tmp_path):
+def test_confirm_is_deterministic(fake_store):
     """Derived data is regenerated, never hand-edited: regenerating twice
     over the same store produces byte-identical output."""
-    first = tmp_path / "a.md"
-    second = tmp_path / "b.md"
+    first = Path("/a.md")
+    second = Path("/b.md")
     assert confirm(first, store=fake_store) == 0
     assert confirm(second, store=fake_store) == 0
     assert first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
@@ -99,7 +99,7 @@ def test_session_openings_are_recognizable(fake_store):
         assert o.hist, f"{o.label} has no tool mix"
 
 
-def test_apply_labels_folds_verdicts_into_ground_truth(tmp_path, fake_store):
+def test_apply_labels_folds_verdicts_into_ground_truth(fake_store):
     """A phase verdict folds into the ground truth; re-running is
     idempotent; an agreement (same phase) changes nothing."""
     from sdl_flow_optimiser.findings.attribution_feasibility import find_files
@@ -108,8 +108,8 @@ def test_apply_labels_folds_verdicts_into_ground_truth(tmp_path, fake_store):
     runs = Transcript.from_session_file(first_session).runs()
     assert runs
     phase_id = runs[0].run_id
-    gt_path = tmp_path / "gt.json"
-    labels_path = tmp_path / "labels.jsonl"
+    gt_path = Path("/gt.json")
+    labels_path = Path("/labels.jsonl")
     gt_path.write_text(json.dumps({"other": 6}) + "\n", encoding="utf-8")
     stores = Labels(labels_path=labels_path)
     stores.add_run_verdict(phase_id, 3, "flow work")

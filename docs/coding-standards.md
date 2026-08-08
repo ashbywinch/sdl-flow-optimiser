@@ -48,6 +48,20 @@ Language-agnostic by design; per-language toolchain conventions (ruff, eslint, f
   and documented, or extract it to a shared module. Circular imports are fixed
   by restructuring modules, never bodged with lazy imports.
 
+### Code and structured data live in files
+
+- **A string literal never carries code or a structured format as text.**
+  Code that is meant to be executed, parsed, or maintained as code — a
+  snippet, a template, a generated program — is a real file. So is a
+  string whose content IS the data format: a JSON fragment, a CSV row, a
+  YAML blob, hand-written in a literal, is invisible to the format's own
+  validation (a parser, a schema), drifts from the real toolchain, and
+  cannot be linted or run. Building the text with the format's library
+  from program structures is not a violation — `json.dumps({...})`,
+  `csv.writer(...)` — the text is produced, never hand-written. In tests,
+  a fixture that is code, or structured data the test needs as text, is a
+  real file under `tests/fixtures/`.
+
 ### Naming & Types
 
 - **Names communicate intent.** Domain names, not shapes: `monthlyPayment`
