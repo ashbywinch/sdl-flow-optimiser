@@ -245,10 +245,14 @@ def test_samples_carry_session_id():
     assert sample["session_id"].endswith(".jsonl")
 
 
-def test_api_rejects_path_traversal_session_id(fake_store):
+def test_api_rejects_path_traversal_session_id(fake_store, fs):
     """A crafted session_id must not read files outside the store — the
     labeler is LAN-reachable with no auth (PRD trust decision), so the
-    containment check is the boundary."""
+    containment check is the boundary. The out-of-store targets exist in
+    the fake filesystem, so a 404 can only come from the containment
+    check, never from a missing file."""
+    for target in ("/etc/hostname", "/etc/passwd", "/secret.jsonl"):
+        fs.create_file(target, contents="x")
     client = _client(fake_store)
     for evil in ("..%2F..%2F..%2F..%2F..%2Fetc%2Fhostname", "%2e%2e%2f%2e%2e%2fetc%2fpasswd", "..%2F..%2Fsecret.jsonl"):
         assert client.get(f"/api/sessions/{evil}").status_code == 404

@@ -49,6 +49,15 @@ constant to point at a tmp dir; make the dependency a parameter).
 - Shared test infrastructure (fixtures, fakes) is extracted once, not
   copy-pasted per file.
 
+## Pre-process expensive fixtures once
+
+Tests that need expensive setup — building a store, parsing a large
+fixture, classifying a corpus — do it once and reuse it: a session-scoped
+fixture, a module-level constant, a parsed-once structure passed through
+fixtures. Never recompute the same derived data per test; the suite's
+runtime is a property, and a test that rebuilds what a sibling already
+built is wasted work.
+
 ## Fake the filesystem before touching the real one
 
 File I/O in tests uses pyfakefs (`fs` fixture; `fake_filesystem_unittest`

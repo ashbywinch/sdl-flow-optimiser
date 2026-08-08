@@ -31,12 +31,21 @@ def _roundtrip_args(raw: str) -> Any:
         return raw
 
 
-def _build_fake_store(root: Path) -> Path:
-    phases_by_session: dict[str, list[dict[str, Any]]] = {}
+@pytest.fixture(scope="session")
+def _phase_dump_records() -> list[dict[str, Any]]:
+    """Parse the committed phase dump once — the expensive part; each test
+    rebuilds only the in-memory store files from it (testing standard:
+    pre-process expensive fixtures once)."""
+    records: list[dict[str, Any]] = []
     for line in DUMP_PATH.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
+        if line.strip():
+            records.append(json.loads(line))
+    return records
+
+
+def _build_fake_store(root: Path, records: list[dict[str, Any]]) -> Path:
+    phases_by_session: dict[str, list[dict[str, Any]]] = {}
+    for row in records:
         phases_by_session.setdefault(row["session"], []).append(row)
     store = root / "store"
     for proj, stamp, _label in SAMPLE:
@@ -109,7 +118,7 @@ def fs_with_repo(fs) -> None:
 
 
 @pytest.fixture
-def fake_store(fs_with_repo) -> Path:
+def fake_store(fs_with_repo, _phase_dump_records) -> Path:
     """A fake session store whose phases match the committed dump, built in
     the in-memory filesystem (testing standard: fakefs wherever possible)."""
-    return _build_fake_store(Path("/store"))
+    return _build_fake_store(Path("/store"), _phase_dump_records)
