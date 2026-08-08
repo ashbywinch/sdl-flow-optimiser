@@ -49,14 +49,35 @@ constant to point at a tmp dir; make the dependency a parameter).
 - Shared test infrastructure (fixtures, fakes) is extracted once, not
   copy-pasted per file.
 
-## Pre-process expensive fixtures once
+## Precompute, materialise — unless the test is the round trip
 
-Tests that need expensive setup — building a store, parsing a large
-fixture, classifying a corpus — do it once and reuse it: a session-scoped
-fixture, a module-level constant, a parsed-once structure passed through
-fixtures. Never recompute the same derived data per test; the suite's
-runtime is a property, and a test that rebuilds what a sibling already
-built is wasted work.
+Expensive derived data is precomputed once — and if it is stable, it is
+materialised as a committed artifact so tests never recompute it at all.
+The S1 finding is the pattern: the sampled phases were derived from the
+live sessions once, committed as s1_dump.jsonl, and the tests read the
+committed evidence.
+
+- **Materialise when it saves time and the artifact is small enough for
+  git** — a derived fixture (a dump, a snapshot, a generated corpus) is
+  computed during development, committed, and read by the tests.
+- **Do not materialise a gratuitously massive dataset** — a huge artifact
+  bloats the repo and the clone; the tradeoff is a real cost, not a
+  preference. When the dataset would be huge, rewrite the test to not
+  need it: shrink the fixture to a representative subset, or restructure
+  what is being tested.
+- **Never materialise the output of a round trip the test exists to
+  verify** — if the whole point of the test is that the current code can
+  round-trip something (serialize → parse → compare, write → read →
+  compare), the test runs the current code; a committed artifact would
+  compare against a stale snapshot and the round trip would go
+  unexercised. Materialise the input if helpful; never the round-trip
+  output.
+
+Within a test run the same principle applies at fixture scope: a
+session-scoped fixture, a module constant, a parsed-once structure —
+never recompute the same derived data per test. The suite's runtime is a
+property, and a test that rebuilds what a sibling already built is wasted
+work.
 
 ## Fake the filesystem before touching the real one
 
