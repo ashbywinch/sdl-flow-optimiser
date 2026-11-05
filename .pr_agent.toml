@@ -9,6 +9,11 @@ max_model_tokens = 128000
 ai_timeout = 600
 fallback_models = []
 repo_context_from_default_branch = false
+# The renderer caps rendered context at repo_context_max_lines (default 500) and
+# STOPS at the first file that overruns - every later file is dropped silently.
+# These files are ~1344 lines together. Raise this whenever the list grows.
+# See pr_agent/algo/repo_context.py.
+repo_context_max_lines = 1600
 repo_context_files = [
     "docs/PRD.md",
     "docs/TECHSPEC.md",
@@ -28,7 +33,7 @@ require_tests_review = true
 require_security_review = true
 inline_more_suggestions = true  # Enables inline code comments during /review
 num_max_findings = 50
-extra_instructions = "Check the PR against each file in repo_context_files. Add a 'Compliance' section per doc, listing any violations found or 'No violations'. Flag violations as findings, not just notes: style and semantic deviations from docs/coding-standards.md, test-standard deviations from docs/testing-standards.md, requirement deviations from docs/PRD.md (a change that violates a stated requirement, constraint, persona, or JTBD is a finding), documentation-standard deviations from docs/writing-documentation.md (missing or malformed required docs — PRD with JTBD/personas/constraints, TECHSPEC with choices/spikes/diagrams, PLAN with the software's phase inputs/outputs and quality gates — and the required docs failing the documentation-quality checklist), and UX deviations from docs/ux-standards.md (a change that violates a UX principle or the repo's usability baseline is a finding). Structural findings matter as much as bugs: a missed class (three or more free functions sharing the same record, or a pile of functions over one structure — docs/coding-standards.md 'Cohesive modules and classes') and class names that are technology or verb-derived nouns like GraphBuilder instead of domain nouns ('Names communicate intent') are findings, not style notes. Separation-of-concerns violations are findings too: importing a sibling layer directly, or a function that mixes I/O with computation — fetch/read/parse and decide in one body ('Separation of concerns')."
+extra_instructions = "Check the PR against each file in repo_context_files. Report every violation as its own finding with path:line and the rule it breaks; never report something as compliant unless you checked it against the file that states the rule. Flag violations as findings, not just notes: style and semantic deviations from docs/coding-standards.md, test-standard deviations from docs/testing-standards.md, requirement deviations from docs/PRD.md (a change that violates a stated requirement, constraint, persona, or JTBD is a finding), documentation-standard deviations from docs/writing-documentation.md (missing or malformed required docs — PRD with JTBD/personas/constraints, TECHSPEC with choices/spikes/diagrams, PLAN with the software's phase inputs/outputs and quality gates — and the required docs failing the documentation-quality checklist), and UX deviations from docs/ux-standards.md (a change that violates a UX principle or the repo's usability baseline is a finding). Structural findings matter as much as bugs: a missed class (three or more free functions sharing the same record, or a pile of functions over one structure — docs/coding-standards.md 'Cohesive modules and classes') and class names that are technology or verb-derived nouns like GraphBuilder instead of domain nouns ('Names communicate intent') are findings, not style notes. Separation-of-concerns violations are findings too: importing a sibling layer directly, or a function that mixes I/O with computation — fetch/read/parse and decide in one body ('Separation of concerns')."
 
 [pr_code_suggestions]
 summarize_only = false  # Ensures suggestions are posted as inline diff comments
