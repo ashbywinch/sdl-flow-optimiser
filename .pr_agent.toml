@@ -36,4 +36,6 @@ num_code_suggestions = 10
 
 [github_action_config]
 handle_push_trigger = true
+# Bot pushes get a review too: every commit in this repo is authored by omp-harness.
+push_trigger_ignore_bot_commits = false
 push_commands = ["/review -i", "/improve -i"]
